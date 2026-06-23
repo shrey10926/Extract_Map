@@ -1,0 +1,48 @@
+{
+    "file": "02429994.TIF",
+    "status": "success",
+    "doc_type": "tif",
+    "total_pages": 1,
+    "error": null,
+    "invoices": [
+        {
+            "invoice_num": 1,
+            "pages": "Page 1",
+            "vendor_name": "GAMA CLIMATE LLC", //from ai
+            "supplier_id": 224491, //from db
+            "supplier_name": "Gama Climate LLC", //from db
+            "supplier_confidence": 99,
+            "supplier_match_reason": "The extracted vendor name 'GAMA CLIMATE LLC' is an exact match (case-insensitive) to 'Gama Climate LLC' (ID: 224491) with a perfect fuzzy score of 1.00.",
+            "status": "success",
+            "error": null,
+            "items": [
+                {
+                    "extracted_item_name": "CHETAK NY - TROUBLESHOOT HEATING UNIT / MAINTENANCE 2 ROOF TOP UNITS", //from ai
+                    "charge_type": "service", //from db?
+                    "qty": "NA", //if no qty in invoice then consider 1
+                    "unit_price": 672, //from ai
+                    "line_total_price": 672, //from ai
+                    "part_id": "50446", //from db
+                    "part_name": "CONTRACT SERVICE", //from db
+                    "last_price": 928.43, //from db
+                    "last_invoice": "2026-03-02 00:00:00",
+                    "match_confidence": 72,
+                    "match_reason": "Step 1: This invoice item describes a service call — troubleshooting a heating unit and performing maintenance on 2 rooftop HVAC units at a location called 'CHETAK NY'. This is clearly a labor/service charge, not a physical product. Category: service. Step 2: Catalog has two entries: 'CONTRACT SERVICE' (ID: 50446, $928.43) — a broad service agreement or service labor charge, covering maintenance/repair work performed under contract; and 'INFRARED CEILING HEATER WITH PARTS' (ID: 224614, $5396.00) — a physical product (heater unit with parts), not a service. Step 3: The invoice item is a field service charge for troubleshooting and maintenance of rooftop heating units. 'CONTRACT SERVICE' maps well to this — an HVAC supplier offering contract-based maintenance and repair labor is standard. The decoded meanings align: invoice = service labor, catalog = service contract. 'INFRARED CEILING HEATER WITH PARTS' is eliminated as it is a physical product purchase, not a service call. The price difference ($672 invoice vs $928.43 catalog) is moderate but not disqualifying for a service item billed at a variable rate. Step 4: This is a clear categorical match. CONTRACT SERVICE is the logical coding for a maintenance/troubleshooting service call from an HVAC supplier."
+                },
+                {
+                    "extracted_item_name": "Item 2",
+                    "charge_type": "service",
+                    "qty": "NA", //if no qty in invoice then consider 1
+                    "unit_price": 672,
+                    "line_total_price": 672,
+                    "part_id": "50446", //from db
+                    "part_name": "CONTRACT SERVICE", //from db
+                    "last_price": 928.43, //from db
+                    "last_invoice": "2026-03-02 00:00:00",
+                    "match_confidence": 72,
+                    "match_reason": "Step 1: This invoice item describes a service call — troubleshooting a heating unit and performing maintenance on 2 rooftop HVAC units at a location called 'CHETAK NY'. This is clearly a labor/service charge, not a physical product. Category: service. Step 2: Catalog has two entries: 'CONTRACT SERVICE' (ID: 50446, $928.43) — a broad service agreement or service labor charge, covering maintenance/repair work performed under contract; and 'INFRARED CEILING HEATER WITH PARTS' (ID: 224614, $5396.00) — a physical product (heater unit with parts), not a service. Step 3: The invoice item is a field service charge for troubleshooting and maintenance of rooftop heating units. 'CONTRACT SERVICE' maps well to this — an HVAC supplier offering contract-based maintenance and repair labor is standard. The decoded meanings align: invoice = service labor, catalog = service contract. 'INFRARED CEILING HEATER WITH PARTS' is eliminated as it is a physical product purchase, not a service call. The price difference ($672 invoice vs $928.43 catalog) is moderate but not disqualifying for a service item billed at a variable rate. Step 4: This is a clear categorical match. CONTRACT SERVICE is the logical coding for a maintenance/troubleshooting service call from an HVAC supplier."
+                }
+            ]
+        }
+    ]
+}

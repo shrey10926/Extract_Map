@@ -1,0 +1,56 @@
+{
+    "type": "OBJECT",
+    "properties": {
+        "supplier_name": {
+            "type": "STRING",
+            "description": "The name of the company issuing the invoice. Return null if not found."
+        },
+        "invoice_date": {
+            "type": "STRING",
+            "description": "The date the invoice was issued. Return null if not found."
+        },
+        "invoice_number": {
+            "type": "STRING",
+            "description": "The unique invoice identifier. Return null if not found."
+        },
+        "line_items": {
+            "type": "ARRAY",
+            "description": "List of items purchased. Return an empty array if no items are found.",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "item_name": {
+                        "type": "STRING",
+                        "description": "The description or name of the product/service."
+                    },
+                    "quantity": {
+                        "type": "NUMBER",
+                        "description": "The number of items purchased. Return 1 if not explicitly stated."
+                    },
+                    "rate": {
+                        "type": "NUMBER",
+                        "description": "The unit price of a single item. Remove currency symbols. Return null if not stated."
+                    },
+                    "amount": {
+                        "type": "NUMBER",
+                        "description": "The total cost for this line item. Remove currency symbols. Return null if not stated."
+                    }
+                },
+                "required": [
+                    "item_name"
+                ]
+            }
+        },
+        "total_invoice_amount": {
+            "type": "NUMBER",
+            "description": "The final grand total amount of the invoice including taxes. Remove currency symbols. Return null if not found."
+        }
+    },
+    "required": [
+        "supplier_name",
+        "invoice_date",
+        "invoice_number",
+        "line_items",
+        "total_invoice_amount"
+    ]
+}

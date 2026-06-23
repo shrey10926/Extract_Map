@@ -1,0 +1,8 @@
+__pycache__/
+*.log
+build/
+dist/
+*.manifest
+*.spec
+.ipynb_checkpoints
+pitch/

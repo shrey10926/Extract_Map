@@ -1,0 +1,6 @@
+api:
+  model_name: "arn:aws:bedrock:us-east-1:336106154270:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+  temperature: 0
+  max_tokens: 4096
+  timeout_seconds: 300
+  retry_delay: 10.0

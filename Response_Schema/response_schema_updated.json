@@ -1,0 +1,80 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "supplier_name": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Supplier/vendor company name."
+        },
+        "invoice_date": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Invoice date"
+        },
+        "invoice_number": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Invoice identifier."
+        },
+        "line_items": {
+            "type": "array",
+            "description": "List of invoice line items.",
+            "minItems": 0,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "item_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Item/service description."
+                    },
+                    "quantity": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Quantity purchased."
+                    },
+                    "rate": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Unit price without currency symbol."
+                    },
+                    "amount": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Total line item amount without currency symbol."
+                    }
+                }
+            }
+        },
+        "total_invoice_amount": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Final invoice total amount without currency symbol."
+        }
+    },
+    "required": [
+        "supplier_name",
+        "invoice_date",
+        "invoice_number",
+        "line_items",
+        "total_invoice_amount"
+    ]
+}
