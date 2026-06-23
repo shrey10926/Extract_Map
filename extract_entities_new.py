@@ -1,0 +1,357 @@
+from pathlib import Path
+import os, io, time, json, yaml, boto3, fitz
+from typing import Optional, List, Dict, Any
+from PIL import Image
+
+
+# =============================================================================
+# CONFIG
+# =============================================================================
+
+OUTPUT_DIR = Path("./saved_images")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+with open("bedrock_config.yaml", "r") as f:
+    APP_CONFIG = yaml.safe_load(f)
+
+with open(r"Prompt\prompt.yaml", "r") as f:
+    prompt = yaml.safe_load(f)
+
+with open(r"Response_Schema\response_schema_updated.json", "r") as f:
+    response_schema = json.load(f)
+
+SYSTEM_PROMPT = prompt["system_prompt"]
+
+
+session = boto3.Session(profile_name="shrey_bedrock")
+
+client = session.client(
+    "bedrock-runtime",
+    region_name="us-east-1"
+)
+
+
+# =============================================================================
+# IMAGE PREPROCESSING
+# =============================================================================
+
+def preprocess_image(
+    img: Image.Image,
+    output_path: str = None,
+    max_edge: int = 1568
+) -> bytes:
+    """
+    Convert image to RGB, resize if required,
+    return PNG bytes and optionally save.
+    """
+
+    img = img.convert("RGB")
+
+    # print(f"img -->> {img}")
+
+    width, height = img.size
+    if max(width, height) > max_edge:
+        if width > height:
+            new_width = max_edge
+            new_height = int(height * max_edge / width)
+        else:
+            new_height = max_edge
+            new_width = int(width * max_edge / height)
+
+        img = img.resize(
+            (new_width, new_height),
+            Image.Resampling.LANCZOS
+        )
+
+    buffer = io.BytesIO()
+
+    img.save(
+        buffer,
+        format="PNG",
+        optimize=True
+    )
+
+    png_bytes = buffer.getvalue()
+
+    # Save debug image
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        with open(output_path, "wb") as f:
+            f.write(png_bytes)
+
+    return png_bytes
+
+# =============================================================================
+# PDF PROCESSING
+# =============================================================================
+
+def process_pdf(
+    file_path: str,
+    password: Optional[str] = None
+) -> List[Dict[str, Any]]:
+
+    processed_pages = []
+
+    doc = fitz.open(file_path)
+
+    try:
+
+        if doc.is_encrypted:
+
+            if not password:
+                raise ValueError(
+                    f"PDF '{file_path}' is encrypted."
+                )
+
+            if not doc.authenticate(password):
+                raise ValueError(
+                    f"Incorrect password for '{file_path}'"
+                )
+
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            matrix = fitz.Matrix(2.5, 2.5)
+            pix = page.get_pixmap(
+                matrix=matrix,
+                alpha=False
+            )
+
+            img = Image.frombytes(
+                "RGB",
+                [pix.width, pix.height],
+                pix.samples
+            )
+
+            base_name = Path(file_path).stem
+            output_dir = OUTPUT_DIR / base_name
+            output_dir.mkdir(parents=True, exist_ok=True)
+            save_path = output_dir / f"page_{page_num + 1}.png"
+
+            png_bytes = preprocess_image(
+                img=img,
+                output_path=str(save_path)
+            )
+
+            processed_pages.append(
+                {
+                    "page_number": page_num + 1,
+                    "png_bytes": png_bytes,
+                    "saved_path": str(save_path)
+                }
+            )
+
+    finally:
+        doc.close()
+
+    return processed_pages
+
+
+# =============================================================================
+# TIFF PROCESSING
+# =============================================================================
+
+def process_tiff(file_path: str) -> List[Dict[str, Any]]:
+
+    processed_pages = []
+    img = Image.open(file_path)
+
+    page_num = 1
+    while True:
+
+        try:
+            frame = img.copy()
+
+            base_name = Path(file_path).stem
+            output_dir = OUTPUT_DIR / base_name
+            output_dir.mkdir(parents=True, exist_ok=True)
+            save_path = output_dir / f"page_{page_num}.png"
+
+            print(f"Processing page: {page_num}")
+            png_bytes = preprocess_image(
+                img=frame,
+                output_path=str(save_path)
+            )
+
+            processed_pages.append(
+                {
+                    "page_number": page_num,
+                    "png_bytes": png_bytes,
+                    "saved_path": str(save_path)
+                }
+            )
+
+            page_num += 1
+            img.seek(img.tell() + 1)
+
+        except EOFError:
+            break
+
+    return processed_pages
+
+
+# =============================================================================
+# JPG / PNG / WEBP / BMP
+# =============================================================================
+
+def process_image_file(file_path: str) -> List[Dict[str, Any]]:
+
+    img = Image.open(file_path)
+
+    base_name = Path(file_path).stem
+
+    output_dir = OUTPUT_DIR / base_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    save_path = output_dir / f"{base_name}.png"
+
+    png_bytes = preprocess_image(
+        img=img,
+        output_path=str(save_path)
+    )
+
+    return [
+        {
+            "page_number": 1,
+            "png_bytes": png_bytes,
+            "saved_path": str(save_path)
+        }
+    ]
+
+
+# =============================================================================
+# DOCUMENT ROUTER
+# =============================================================================
+
+def convert_document(
+    file_path: str,
+    password: Optional[str] = None
+) -> List[Dict[str, Any]]:
+
+    ext = Path(file_path).suffix.lower()
+
+    if ext == ".pdf":
+        return process_pdf(file_path, password)
+
+    elif ext in (".tif", ".tiff"):
+        return process_tiff(file_path)
+
+    elif ext in (
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp"
+    ):
+        return process_image_file(file_path)
+
+    raise ValueError(
+        f"Unsupported file type: {ext}"
+    )
+
+
+# =============================================================================
+# BUILD BEDROCK CONTENT BLOCKS
+# =============================================================================
+
+def build_content_blocks(
+    pages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+
+    content_blocks = []
+
+    for page in pages:
+
+        content_blocks.append(
+            {
+                "image": {
+                    "format": "png",
+                    "source": {
+                        "bytes": page["png_bytes"]
+                    }
+                }
+            }
+        )
+
+    return content_blocks
+
+
+# =============================================================================
+# CLAUDE EXTRACTION
+# =============================================================================
+
+def extract_invoice(
+    file_path: str,
+    password: Optional[str] = None
+) -> dict:
+
+    pages = convert_document(
+        file_path=file_path,
+        password=password
+    )
+
+    print(f"Pages processed: {len(pages)}")
+
+    content_blocks = build_content_blocks(pages)
+
+    response = client.converse(
+        modelId=APP_CONFIG["api"]["model_name"],
+        system=[
+            {
+                "text": SYSTEM_PROMPT
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": content_blocks
+            }
+        ],
+        outputConfig={
+            "textFormat": {
+                "type": "json_schema",
+                "structure": {
+                    "jsonSchema": {
+                        "name": "invoice_extraction",
+                        "schema": json.dumps(
+                            response_schema
+                        )
+                    }
+                }
+            }
+        },
+        inferenceConfig={
+            "temperature":
+                APP_CONFIG["api"]["temperature"],
+            "maxTokens":
+                APP_CONFIG["api"]["max_tokens"]
+        }
+    )
+
+    response_text = (
+        response["output"]["message"]["content"][0]["text"]
+        .strip()
+        .removeprefix("```json")
+        .removeprefix("```")
+        .removesuffix("```")
+    )
+
+    return json.loads(response_text)
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+if __name__ == "__main__":
+
+    start = time.time()
+    invoice_path = r"1008_1234.pdf"
+    result = extract_invoice(invoice_path)
+
+    with open("result.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=4, ensure_ascii=False)
+
+    print("Extraction complete.")
+    print(f"Time taken: {time.time() - start} seconds")
