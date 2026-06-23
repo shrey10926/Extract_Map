@@ -48,8 +48,6 @@ def preprocess_image(
 
     img = img.convert("RGB")
 
-    # print(f"img -->> {img}")
-
     width, height = img.size
     if max(width, height) > max_edge:
         if width > height:
