@@ -407,6 +407,59 @@ def get_semantic_supplier_candidates(
 
 
 # =========================================================
+# BACKFILL MISSING SCORES
+# =========================================================
+
+def backfill_candidate_scores(
+    grouped: pd.DataFrame,
+    query_fuzzy: str,
+    query_semantic: str,
+    model: SentenceTransformer = None
+) -> pd.DataFrame:
+    if grouped.empty:
+        return grouped
+
+    needs_fuzzy = (grouped["fuzzy_score"] == 0.0) & (grouped["exact_match"] == 0.0)
+    if needs_fuzzy.any() and query_fuzzy:
+        for idx in grouped[needs_fuzzy].index:
+            candidate_fuzzy = normalize_supplier_name_fuzzy(grouped.at[idx, "Supplier_Name"])
+            if candidate_fuzzy:
+                score = fuzz.WRatio(query_fuzzy, candidate_fuzzy)
+                grouped.at[idx, "fuzzy_score"] = float(score)
+
+    needs_cosine = (grouped["cosine_score"] == 0.0) & (grouped["exact_match"] == 0.0)
+    if needs_cosine.any() and query_semantic and model is not None:
+        query_vec = model.encode(
+            [query_semantic],
+            task="text-matching",
+            convert_to_numpy=True,
+            normalize_embeddings=True
+        ).astype(np.float32)
+
+        candidate_indices = grouped[needs_cosine].index.tolist()
+        candidate_texts = [
+            normalize_supplier_name_semantic(grouped.at[idx, "Supplier_Name"])
+            for idx in candidate_indices
+        ]
+
+        valid = [(idx, text) for idx, text in zip(candidate_indices, candidate_texts) if text]
+        if valid:
+            valid_indices, valid_texts = zip(*valid)
+            candidate_vecs = model.encode(
+                list(valid_texts),
+                task="text-matching",
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            ).astype(np.float32)
+
+            scores = (candidate_vecs @ query_vec.T).flatten()
+            for idx, score in zip(valid_indices, scores):
+                grouped.at[idx, "cosine_score"] = float(score)
+
+    return grouped
+
+
+# =========================================================
 # MERGE + RANK
 # =========================================================
 
@@ -415,7 +468,10 @@ def merge_and_rank_candidates(
     fuzzy_df: pd.DataFrame,
     semantic_df: pd.DataFrame,
     top_k_final: int = TOP_K_FINAL,
-    weights: Optional[Dict[str, float]] = None
+    weights: Optional[Dict[str, float]] = None,
+    query_fuzzy: str = "",
+    query_semantic: str = "",
+    model: SentenceTransformer = None
 ) -> pd.DataFrame:
     """
     Merge candidates by Supplier_Id and compute weighted final score.
@@ -456,6 +512,10 @@ def merge_and_rank_candidates(
             "cosine_score": "max",
             "matched_via": lambda s: ",".join(sorted(set([x for x in s if pd.notna(x) and str(x).strip() != ""])))
         })
+    )
+
+    grouped = backfill_candidate_scores(
+        grouped, query_fuzzy, query_semantic, model
     )
 
     grouped["fuzzy_score_norm"] = grouped["fuzzy_score"] / 100.0
@@ -549,7 +609,10 @@ def map_supplier_name_from_invoice(
         exact_df=exact_df,
         fuzzy_df=fuzzy_df,
         semantic_df=semantic_df,
-        top_k_final=top_k_final
+        top_k_final=top_k_final,
+        query_fuzzy=supplier_fuzzy_query,
+        query_semantic=supplier_semantic_query,
+        model=model
     )
 
     if ranked_df.empty:
