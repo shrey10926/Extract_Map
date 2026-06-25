@@ -4,8 +4,12 @@ from typing import Any, Dict, Tuple, Optional
 import json, re, os, unicodedata, yaml, boto3, faiss, numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
+from datetime import datetime
 
+DEBUG_DIR = Path("debug_logs")
+DEBUG_DIR.mkdir(exist_ok=True)
 
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 # =========================================================
 # CONFIG
 # =========================================================
@@ -375,27 +379,17 @@ def get_semantic_supplier_candidates(
         convert_to_numpy=True,
         normalize_embeddings=True
     ).astype(np.float32)
-    
-    # (1, 1024)
-    # print(f"AAAAAAAAAAAAAAAAAAAAAAAAAA -->> {query_vec.shape}")
 
     k = min(top_k, index.ntotal)
     scores, indices = index.search(query_vec, k)
 
     rows = []
-    print("Metadata size:", len(metadata_df))
-    print(f"ZZZZZZZZ -->> {metadata_df.columns.tolist()}")
-    print(metadata_df.head())
-
     for score, idx in zip(scores[0], indices[0]):
         print("\nINDEX:", idx)
         if idx < 0 or idx >= len(metadata_df):
             continue
 
         meta_row = metadata_df.iloc[int(idx)]
-
-        print(f"META ROW -->> {meta_row}")
-
         supplier_id = meta_row.get("Supplier_Id", None)
         supplier_name = meta_row.get("Supplier_Name", None)
 
@@ -560,60 +554,13 @@ def merge_and_rank_candidates(
 # LLM RERANKING
 # =========================================================
 
-RERANK_SYSTEM_PROMPT = """\
-You are a supplier name matching expert. You are given:
-1. A supplier name extracted from an invoice
-2. Line items from the invoice showing what products/services this supplier provides
-3. A list of candidate matches from a database, each with their matching scores AND a sample of products/services that candidate supplies according to the database
+with open(r"Prompt\rerank.yaml", "r") as f:
+    prompt = yaml.safe_load(f)
+RERANK_SYSTEM_PROMPT = prompt["system_prompt"]
 
-Rerank the candidates by likelihood of being the correct match.
 
-Consider:
-- String similarity between the extracted name and candidate names
-- Whether the candidate's database products/services align with the invoice line items (this is a strong signal — a candidate whose sample products match the invoice line items is much more likely to be correct, even if the name similarity is weaker)
-- Common supplier name variations (abbreviations, legal suffixes like Inc/LLC/Corp, DBA names, parent companies)
-- Spelling errors or OCR artifacts in the extracted name
-
-Note: The sample products are only a small subset of what the candidate supplies — a missing product category does not mean the candidate is wrong, but matching categories is a positive signal.
-
-Return the top 5 most likely matches with confidence level and reasoning.
-If none of the candidates appear to be a correct match, set no_match to true and explain why."""
-
-RERANK_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "reranked_candidates": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "original_rank": {
-                        "type": "integer",
-                        "description": "The rank number (1-10) of this candidate from the input list"
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["high", "medium", "low"]
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Brief explanation for why this candidate is or isn't a good match"
-                    }
-                },
-                "required": ["original_rank", "confidence", "reason"]
-            }
-        },
-        "no_match": {
-            "type": "boolean",
-            "description": "True if none of the candidates appear to be a correct match"
-        },
-        "no_match_reason": {
-            "type": "string",
-            "description": "Explanation of why no candidates match, empty string if no_match is false"
-        }
-    },
-    "required": ["reranked_candidates", "no_match", "no_match_reason"]
-}
+with open(r"Response_Schema\rerank_schema.json", "r") as f:
+    RERANK_RESPONSE_SCHEMA = json.load(f)
 
 
 def get_sample_parts_for_candidate(
@@ -690,31 +637,41 @@ def rerank_candidates_with_llm(
 
     client = _get_bedrock_client()
 
-    response = client.converse(
-        modelId=BEDROCK_CONFIG["api"]["model_name"],
-        system=[{"text": RERANK_SYSTEM_PROMPT}],
-        messages=[
-            {
-                "role": "user",
-                "content": [{"text": user_message}]
-            }
-        ],
-        outputConfig={
-            "textFormat": {
-                "type": "json_schema",
-                "structure": {
-                    "jsonSchema": {
-                        "name": "supplier_reranking",
-                        "schema": json.dumps(RERANK_RESPONSE_SCHEMA)
-                    }
+    request_payload = {
+    "modelId": BEDROCK_CONFIG["api"]["model_name"],
+    "system": [
+        {
+            "text": RERANK_SYSTEM_PROMPT
+        }
+    ],
+    "messages": [
+        {
+            "role": "user",
+            "content": [{"text": user_message}]
+        }
+    ],
+    "outputConfig": {
+        "textFormat": {
+            "type": "json_schema",
+            "structure": {
+                "jsonSchema": {
+                    "name": "supplier_reranking",
+                    "schema": json.dumps(RERANK_RESPONSE_SCHEMA)
                 }
             }
-        },
-        inferenceConfig={
-            "temperature": 0,
-            "maxTokens": 1024
         }
-    )
+    },
+    "inferenceConfig": {
+        "temperature": BEDROCK_CONFIG["api"]["temperature"],
+        "maxTokens": BEDROCK_CONFIG["api"]["max_tokens"]
+    }
+    }
+    request_to_save = json.loads(json.dumps(request_payload, default=str))
+    with open(DEBUG_DIR / f"{timestamp}_request.json", "w", encoding="utf-8") as f:
+        json.dump(request_to_save, f, indent=4, ensure_ascii=False)
+
+    response = client.converse(**request_payload)
+
 
     response_text = (
         response["output"]["message"]["content"][0]["text"]
@@ -723,6 +680,9 @@ def rerank_candidates_with_llm(
         .removeprefix("```")
         .removesuffix("```")
     )
+
+    with open(DEBUG_DIR / f"{timestamp}_response_raw.json", "w", encoding="utf-8") as f:
+        json.dump(response, f, indent=4, default=str, ensure_ascii=False)
 
     llm_result = json.loads(response_text)
 
