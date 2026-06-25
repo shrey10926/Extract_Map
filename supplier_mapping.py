@@ -36,6 +36,7 @@ TOP_K_FINAL = 10
 # LLM Reranking config
 LLM_RERANK_THRESHOLD = 0.85
 TOP_K_RERANK = 5
+PARTS_PER_CANDIDATE = 3
 
 with open("bedrock_config.yaml", "r") as f:
     BEDROCK_CONFIG = yaml.safe_load(f)
@@ -563,15 +564,17 @@ RERANK_SYSTEM_PROMPT = """\
 You are a supplier name matching expert. You are given:
 1. A supplier name extracted from an invoice
 2. Line items from the invoice showing what products/services this supplier provides
-3. A list of candidate matches from a database with their matching scores
+3. A list of candidate matches from a database, each with their matching scores AND a sample of products/services that candidate supplies according to the database
 
 Rerank the candidates by likelihood of being the correct match.
 
 Consider:
 - String similarity between the extracted name and candidate names
-- Whether the candidate's business aligns with the invoice line items
+- Whether the candidate's database products/services align with the invoice line items (this is a strong signal — a candidate whose sample products match the invoice line items is much more likely to be correct, even if the name similarity is weaker)
 - Common supplier name variations (abbreviations, legal suffixes like Inc/LLC/Corp, DBA names, parent companies)
 - Spelling errors or OCR artifacts in the extracted name
+
+Note: The sample products are only a small subset of what the candidate supplies — a missing product category does not mean the candidate is wrong, but matching categories is a positive signal.
 
 Return the top 5 most likely matches with confidence level and reasoning.
 If none of the candidates appear to be a correct match, set no_match to true and explain why."""
@@ -613,10 +616,31 @@ RERANK_RESPONSE_SCHEMA = {
 }
 
 
+def get_sample_parts_for_candidate(
+    df_site: pd.DataFrame,
+    supplier_id: Any,
+    n_parts: int = PARTS_PER_CANDIDATE
+) -> list:
+    if "PartName_Descriptive" not in df_site.columns:
+        return []
+
+    rows = df_site[df_site["Supplier_Id"] == supplier_id]
+    rows = rows[rows["PartName_Descriptive"].notna()]
+    rows = rows.drop_duplicates(subset=["PartName_Descriptive"])
+
+    if rows.empty:
+        return []
+
+    parts = rows["PartName_Descriptive"].astype(str).head(n_parts).tolist()
+    return parts
+
+
 def rerank_candidates_with_llm(
     ranked_df: pd.DataFrame,
     invoice_json: Dict[str, Any],
-    top_k_rerank: int = TOP_K_RERANK
+    df_site: pd.DataFrame,
+    top_k_rerank: int = TOP_K_RERANK,
+    n_parts_per_candidate: int = PARTS_PER_CANDIDATE
 ) -> Dict[str, Any]:
 
     extracted_supplier = invoice_json.get("supplier_name", "")
@@ -635,6 +659,17 @@ def rerank_candidates_with_llm(
 
     candidates_text = ""
     for _, row in ranked_df.iterrows():
+        sample_parts = get_sample_parts_for_candidate(
+            df_site=df_site,
+            supplier_id=row.get("Supplier_Id"),
+            n_parts=n_parts_per_candidate
+        )
+
+        if sample_parts:
+            parts_block = "\n".join(f"    - {p}" for p in sample_parts)
+        else:
+            parts_block = "    - (no part data available)"
+
         candidates_text += (
             f"Rank {int(row.get('rank', 0))}: "
             f"Supplier_Id={row.get('Supplier_Id', '')}, "
@@ -643,6 +678,7 @@ def rerank_candidates_with_llm(
             f"Fuzzy_Score={row.get('fuzzy_score', 0.0):.1f}, "
             f"Cosine_Score={row.get('cosine_score', 0.0):.4f}, "
             f"Matched_Via={row.get('matched_via', '')}\n"
+            f"  Sample products/services from database:\n{parts_block}\n"
         )
 
     user_message = (
@@ -832,7 +868,9 @@ def map_supplier_name_from_invoice(
             rerank_result = rerank_candidates_with_llm(
                 ranked_df=ranked_df,
                 invoice_json=invoice_json,
-                top_k_rerank=TOP_K_RERANK
+                df_site=df_site,
+                top_k_rerank=TOP_K_RERANK,
+                n_parts_per_candidate=PARTS_PER_CANDIDATE
             )
 
             result["llm_reranked"] = True
