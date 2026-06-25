@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
-import json, re, os, unicodedata, faiss, numpy as np, pandas as pd
+import json, re, os, unicodedata, yaml, boto3, faiss, numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 
@@ -32,6 +32,25 @@ WEIGHTS = {
 
 # If you want a final top-k output after ranking
 TOP_K_FINAL = 10
+
+# LLM Reranking config
+LLM_RERANK_THRESHOLD = 0.85
+TOP_K_RERANK = 5
+
+with open("bedrock_config.yaml", "r") as f:
+    BEDROCK_CONFIG = yaml.safe_load(f)
+
+_bedrock_client_cache = None
+
+
+def _get_bedrock_client():
+    global _bedrock_client_cache
+    if _bedrock_client_cache is None:
+        session = boto3.Session(profile_name="shrey_bedrock")
+        _bedrock_client_cache = session.client(
+            "bedrock-runtime", region_name="us-east-1"
+        )
+    return _bedrock_client_cache
 
 
 # =========================================================
@@ -537,6 +556,166 @@ def merge_and_rank_candidates(
 
 
 # =========================================================
+# LLM RERANKING
+# =========================================================
+
+RERANK_SYSTEM_PROMPT = """\
+You are a supplier name matching expert. You are given:
+1. A supplier name extracted from an invoice
+2. Line items from the invoice showing what products/services this supplier provides
+3. A list of candidate matches from a database with their matching scores
+
+Rerank the candidates by likelihood of being the correct match.
+
+Consider:
+- String similarity between the extracted name and candidate names
+- Whether the candidate's business aligns with the invoice line items
+- Common supplier name variations (abbreviations, legal suffixes like Inc/LLC/Corp, DBA names, parent companies)
+- Spelling errors or OCR artifacts in the extracted name
+
+Return the top 5 most likely matches with confidence level and reasoning.
+If none of the candidates appear to be a correct match, set no_match to true and explain why."""
+
+RERANK_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reranked_candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "original_rank": {
+                        "type": "integer",
+                        "description": "The rank number (1-10) of this candidate from the input list"
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"]
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief explanation for why this candidate is or isn't a good match"
+                    }
+                },
+                "required": ["original_rank", "confidence", "reason"]
+            }
+        },
+        "no_match": {
+            "type": "boolean",
+            "description": "True if none of the candidates appear to be a correct match"
+        },
+        "no_match_reason": {
+            "type": "string",
+            "description": "Explanation of why no candidates match, empty string if no_match is false"
+        }
+    },
+    "required": ["reranked_candidates", "no_match", "no_match_reason"]
+}
+
+
+def rerank_candidates_with_llm(
+    ranked_df: pd.DataFrame,
+    invoice_json: Dict[str, Any],
+    top_k_rerank: int = TOP_K_RERANK
+) -> Dict[str, Any]:
+
+    extracted_supplier = invoice_json.get("supplier_name", "")
+    line_items = invoice_json.get("line_items", [])
+
+    if line_items:
+        line_items_text = "\n".join(
+            f"- {item.get('item_name', 'N/A')} "
+            f"(qty: {item.get('quantity', 'N/A')}, "
+            f"rate: {item.get('rate', 'N/A')}, "
+            f"amount: {item.get('amount', 'N/A')})"
+            for item in line_items
+        )
+    else:
+        line_items_text = "No line items available."
+
+    candidates_text = ""
+    for _, row in ranked_df.iterrows():
+        candidates_text += (
+            f"Rank {int(row.get('rank', 0))}: "
+            f"Supplier_Id={row.get('Supplier_Id', '')}, "
+            f"Name=\"{row.get('Supplier_Name', '')}\", "
+            f"Final_Score={row.get('final_score', 0.0):.4f}, "
+            f"Fuzzy_Score={row.get('fuzzy_score', 0.0):.1f}, "
+            f"Cosine_Score={row.get('cosine_score', 0.0):.4f}, "
+            f"Matched_Via={row.get('matched_via', '')}\n"
+        )
+
+    user_message = (
+        f"Extracted supplier name from invoice: \"{extracted_supplier}\"\n\n"
+        f"Invoice line items:\n{line_items_text}\n\n"
+        f"Candidate matches from database:\n{candidates_text}\n"
+        f"Rerank these candidates and return the top {top_k_rerank} most likely correct matches."
+    )
+
+    client = _get_bedrock_client()
+
+    response = client.converse(
+        modelId=BEDROCK_CONFIG["api"]["model_name"],
+        system=[{"text": RERANK_SYSTEM_PROMPT}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": user_message}]
+            }
+        ],
+        outputConfig={
+            "textFormat": {
+                "type": "json_schema",
+                "structure": {
+                    "jsonSchema": {
+                        "name": "supplier_reranking",
+                        "schema": json.dumps(RERANK_RESPONSE_SCHEMA)
+                    }
+                }
+            }
+        },
+        inferenceConfig={
+            "temperature": 0,
+            "maxTokens": 1024
+        }
+    )
+
+    response_text = (
+        response["output"]["message"]["content"][0]["text"]
+        .strip()
+        .removeprefix("```json")
+        .removeprefix("```")
+        .removesuffix("```")
+    )
+
+    llm_result = json.loads(response_text)
+
+    reranked = []
+    for item in llm_result.get("reranked_candidates", [])[:top_k_rerank]:
+        original_rank = item.get("original_rank")
+        match_row = ranked_df[ranked_df["rank"] == original_rank]
+
+        if match_row.empty:
+            continue
+
+        row = match_row.iloc[0]
+        reranked.append({
+            "Supplier_Id": row["Supplier_Id"],
+            "Supplier_Name": row["Supplier_Name"],
+            "final_score": float(row["final_score"]),
+            "confidence": item.get("confidence", "low"),
+            "reason": item.get("reason", ""),
+            "original_rank": original_rank
+        })
+
+    return {
+        "reranked_candidates": reranked,
+        "no_match": llm_result.get("no_match", False),
+        "no_match_reason": llm_result.get("no_match_reason", "")
+    }
+
+
+# =========================================================
 # MAIN SUPPLIER MAPPING FUNCTION
 # =========================================================
 
@@ -631,11 +810,15 @@ def map_supplier_name_from_invoice(
 
     best_row = ranked_df.iloc[0]
 
-    return {
+    result = {
         "best_supplier_id": best_row["Supplier_Id"],
         "best_supplier_name": best_row["Supplier_Name"],
         "best_score": float(best_row["final_score"]),
         "ranked_candidates": ranked_df,
+        "llm_reranked": False,
+        "llm_reranked_candidates": [],
+        "no_match": False,
+        "no_match_reason": "",
         "query": {
             "site_id": site_id,
             "extracted_supplier": extracted_supplier,
@@ -643,6 +826,30 @@ def map_supplier_name_from_invoice(
             "supplier_semantic_query": supplier_semantic_query
         }
     }
+
+    if result["best_score"] < LLM_RERANK_THRESHOLD:
+        try:
+            rerank_result = rerank_candidates_with_llm(
+                ranked_df=ranked_df,
+                invoice_json=invoice_json,
+                top_k_rerank=TOP_K_RERANK
+            )
+
+            result["llm_reranked"] = True
+            result["llm_reranked_candidates"] = rerank_result["reranked_candidates"]
+            result["no_match"] = rerank_result["no_match"]
+            result["no_match_reason"] = rerank_result["no_match_reason"]
+
+            if rerank_result["reranked_candidates"] and not rerank_result["no_match"]:
+                top_reranked = rerank_result["reranked_candidates"][0]
+                result["best_supplier_id"] = top_reranked["Supplier_Id"]
+                result["best_supplier_name"] = top_reranked["Supplier_Name"]
+                result["best_score"] = top_reranked["final_score"]
+
+        except Exception as e:
+            print(f"LLM reranking failed, using original ranking: {e}")
+
+    return result
 
 
 # =========================================================
@@ -721,3 +928,18 @@ if __name__ == "__main__":
 
     print("\nRANKED CANDIDATES:")
     print(result["ranked_candidates"].to_string(index=False))
+
+    print("\nLLM RERANKED:", result["llm_reranked"])
+    if result["llm_reranked"]:
+        print("No Match:", result["no_match"])
+        if result["no_match"]:
+            print("Reason:", result["no_match_reason"])
+        print("\nRERANKED CANDIDATES:")
+        for c in result["llm_reranked_candidates"]:
+            print(
+                f"  Original Rank {c['original_rank']}: "
+                f"{c['Supplier_Name']} (Id={c['Supplier_Id']}) "
+                f"| Confidence: {c['confidence']} "
+                f"| Score: {c['final_score']:.4f} "
+                f"| Reason: {c['reason']}"
+            )
