@@ -1,0 +1,49 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "reranked_candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "original_rank": {
+                        "type": "integer",
+                        "description": "The rank number (1-10) of this candidate from the input list"
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": [
+                            "high",
+                            "medium",
+                            "low"
+                        ]
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief explanation for why this candidate is or isn't a good match"
+                    }
+                },
+                "required": [
+                    "original_rank",
+                    "confidence",
+                    "reason"
+                ]
+            }
+        },
+        "no_match": {
+            "type": "boolean",
+            "description": "True if none of the candidates appear to be a correct match"
+        },
+        "no_match_reason": {
+            "type": "string",
+            "description": "Explanation of why no candidates match, empty string if no_match is false"
+        }
+    },
+    "required": [
+        "reranked_candidates",
+        "no_match",
+        "no_match_reason"
+    ]
+}
