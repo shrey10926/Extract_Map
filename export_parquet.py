@@ -1,9 +1,8 @@
 import unicodedata, re, os, pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 from pathlib import Path
-from datetime import datetime
 
 
 # =========================================================
@@ -35,14 +34,16 @@ server = os.getenv("DB_HOST")
 database = os.getenv("DB_NAME")
 username = os.getenv("DB_USER")
 password = os.getenv("DB_PASSWORD")
+driver = os.getenv("DB_DRIVER")
+trust = os.getenv("DB_TRUST_CERT", "yes")
 
 odbc_str = (
-    f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+    f"DRIVER={{{driver}}};"
     f"SERVER={server};"
     f"DATABASE={database};"
     f"UID={username};"
     f"PWD={password};"
-    f"TrustServerCertificate=yes;"
+    f"TrustServerCertificate={trust};"
 )
 
 connect_url = (
@@ -72,17 +73,12 @@ SELECT
     -- =========================================
     p.seid,
 
-    e.entity_name,
-    e.entity_shortname,
-
     -- =========================================
     -- SUPPLIER INFORMATION
     -- =========================================
     s.Supplier_Id,
     s.Supplier_Name,
     s.VendorId,
-    s.EmailAddress,
-    s.CountryName,
 
     -- =========================================
     -- PRODUCT INFORMATION
@@ -90,10 +86,6 @@ SELECT
     p.Part_id,
 
     p.PartName_Descriptive,
-    p.PartFull_Description,
-
-    p.GTIN,
-    p.GTIN_UPC,
 
     -- =========================================
     -- SUPPLIER PRODUCT MAPPING
@@ -147,7 +139,6 @@ for col in df.columns:
 # =========================================================
 
 print("Cleaning data...")
-# df = pd.read_excel(r"db_exports/combined_raw_data.xlsx")
 
 # Strip whitespace
 object_cols = df.select_dtypes(include=["object"]).columns
@@ -396,7 +387,9 @@ df["item_name_semantic"] = df["PartName_Descriptive"].apply(
 # # =========================================================
 
 print("Saving parquet file...")
-df.to_excel(r"data/combined_raw_data.xlsx", index=False)
+EXCEL_FILE = OUTPUT_DIR / "combined_raw_data.xlsx"
+df.to_excel(EXCEL_FILE, index=False)
+
 df.to_parquet(
     PARQUET_FILE,
     engine="pyarrow",
@@ -423,50 +416,3 @@ print(df["Supplier_Id"].nunique())
 
 print("\nUnique Products:")
 print(df["Part_id"].nunique())
-df.columns
-# # =========================================================
-# # CLOSE CONNECTION
-# # =========================================================
-
-# conn.close()
-
-# print("\nMSSQL connection closed.")
-
-
-
-
-
-
-# EXPORT ALL DATA AS CSV
-# tables = [
-#     "SupOrder.Supplier_Parts",
-#     "Product.Part",
-#     "SupOrder.Supplier",
-#     "Sites.entity"
-# ]
-
-# os.makedirs("db_exports", exist_ok=True)
-# chunksize = 10000
-
-# for table in tables:
-
-#     query = f"SELECT * FROM {table}"
-
-#     chunk_iter = pd.read_sql(
-#         query,
-#         engine,
-#         chunksize=chunksize
-#     )
-#     output_path = f"db_exports/{table}.csv"
-
-#     first_chunk = True
-#     for chunk in chunk_iter:
-#         chunk.to_csv(
-#             output_path,
-#             mode="w" if first_chunk else "a",
-#             header=first_chunk,
-#             index=False
-#         )
-#         first_chunk = False
-
-#     print(f"Exported {table}")

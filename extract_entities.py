@@ -1,5 +1,6 @@
+# aws sso login --profile shrey_bedrock
 from pathlib import Path
-import os, io, time, json, yaml, boto3, fitz
+import io, time, json, yaml, boto3, fitz
 from typing import Optional, List, Dict, Any
 from PIL import Image
 
@@ -8,21 +9,26 @@ from PIL import Image
 # CONFIG
 # =============================================================================
 
+BASE_DIR = Path(__file__).resolve().parent
+
 OUTPUT_DIR = Path("./saved_images")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-with open("bedrock_config.yaml", "r") as f:
+CONFIG_FILE = BASE_DIR / "bedrock_config.yaml"
+with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     APP_CONFIG = yaml.safe_load(f)
 
-with open(r"Prompt\prompt.yaml", "r") as f:
+
+PROMPT_FILE = BASE_DIR / "Prompt" / "prompt.yaml"
+with open(PROMPT_FILE, "r", encoding="utf-8") as f:
     prompt = yaml.safe_load(f)
-
-with open(r"Response_Schema\response_schema_updated.json", "r") as f:
-    response_schema = json.load(f)
-
 SYSTEM_PROMPT = prompt["system_prompt"]
 
+
+SCHEMA_FILE = BASE_DIR / "Response_Schema" / "response_schema_updated.json"
+with open(SCHEMA_FILE, "r", encoding="utf-8") as f:
+    response_schema = json.load(f)
 
 session = boto3.Session(profile_name="shrey_bedrock")
 
@@ -47,7 +53,6 @@ def preprocess_image(
     """
 
     img = img.convert("RGB")
-
     width, height = img.size
     if max(width, height) > max_edge:
         if width > height:
@@ -74,7 +79,8 @@ def preprocess_image(
 
     # Save debug image
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        # os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_path, "wb") as f:
             f.write(png_bytes)
@@ -345,7 +351,7 @@ def extract_invoice(
 if __name__ == "__main__":
 
     start = time.time()
-    invoice_path = r"1008_1234.pdf"
+    invoice_path = r"Invoices\DPIL\01029292.TIF"
     result = extract_invoice(invoice_path)
 
     with open("result.json", "w", encoding="utf-8") as f:

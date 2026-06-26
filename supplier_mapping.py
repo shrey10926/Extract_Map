@@ -1,7 +1,8 @@
+# aws sso login --profile shrey_bedrock
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
-import json, re, os, unicodedata, yaml, boto3, faiss, numpy as np, pandas as pd
+import json, re, unicodedata, yaml, boto3, faiss, numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
@@ -14,7 +15,10 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 # CONFIG
 # =========================================================
 
-MASTER_PARQUET_PATH = Path("data\master_dataset.parquet")
+BASE_DIR = Path(__file__).resolve().parent
+
+MASTER_PARQUET_PATH = BASE_DIR / "data" / "master_dataset.parquet"
+# MASTER_PARQUET_PATH = Path("data\master_dataset.parquet")
 
 VECTOR_STORE_DIR = Path("vector_store")
 FAISS_DIR = VECTOR_STORE_DIR / "faiss_indexes"
@@ -390,6 +394,7 @@ def get_semantic_supplier_candidates(
             continue
 
         meta_row = metadata_df.iloc[int(idx)]
+
         supplier_id = meta_row.get("Supplier_Id", None)
         supplier_name = meta_row.get("Supplier_Name", None)
 
@@ -553,13 +558,13 @@ def merge_and_rank_candidates(
 # =========================================================
 # LLM RERANKING
 # =========================================================
-
-with open(r"Prompt\rerank.yaml", "r") as f:
+RERANK_PROMPT = BASE_DIR / "Prompt" / "rerank.yaml"
+with open(RERANK_PROMPT, encoding="utf-8") as f:
     prompt = yaml.safe_load(f)
 RERANK_SYSTEM_PROMPT = prompt["system_prompt"]
 
-
-with open(r"Response_Schema\rerank_schema.json", "r") as f:
+SCHEMA_FILE = BASE_DIR / "Response_Schema" / "rerank_schema.json"
+with open(SCHEMA_FILE, "r") as f:
     RERANK_RESPONSE_SCHEMA = json.load(f)
 
 
@@ -671,7 +676,6 @@ def rerank_candidates_with_llm(
         json.dump(request_to_save, f, indent=4, ensure_ascii=False)
 
     response = client.converse(**request_payload)
-
 
     response_text = (
         response["output"]["message"]["content"][0]["text"]

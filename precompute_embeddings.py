@@ -1,11 +1,13 @@
 from pathlib import Path
 import os, faiss, pandas as pd, numpy as np
+import torch
+
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-PARQUET_PATH = r"data\master_dataset.parquet"
+PARQUET_PATH = Path("data/master_dataset.parquet")
 
 HF_MODEL_REPO = "jinaai/jina-embeddings-v5-text-small-text-matching"
 LOCAL_MODEL_DIR = Path("./models/jina-embeddings-v5-text-small-text-matching")
@@ -19,6 +21,7 @@ FAISS_DIR.mkdir(parents=True, exist_ok=True)
 METADATA_DIR = OUTPUT_DIR / "metadata"
 METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 # =========================================================
 # ENTITY CONFIG
 # =========================================================
@@ -91,7 +94,7 @@ print(f"Rows Loaded: {len(df)}")
 print(f"\nLoading embedding model from local path: {LOCAL_MODEL_DIR}")
 model = SentenceTransformer(
     str(LOCAL_MODEL_DIR),
-    device="cuda",
+    device=device,#"cuda"
     trust_remote_code=True
 )
 print("Embedding model loaded.")
@@ -137,6 +140,7 @@ def build_faiss_for_column(df_site: pd.DataFrame, seid, entity_name: str, text_c
     print("Generating embeddings...")
     embeddings = model.encode(
         texts,
+        device=device,
         task="text-matching",
         batch_size=512,
         show_progress_bar=True,
