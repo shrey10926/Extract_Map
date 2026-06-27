@@ -289,6 +289,14 @@ def extract_invoice(
     file_path: str,
     password: Optional[str] = None
 ) -> dict:
+    """
+    Returns:
+        {
+            "file": <source filename>,
+            "total_pages": <number of pages processed>,
+            "entities": <extracted entities dict>
+        }
+    """
 
     pages = convert_document(
         file_path=file_path,
@@ -341,7 +349,13 @@ def extract_invoice(
         .removesuffix("```")
     )
 
-    return json.loads(response_text)
+    entities = json.loads(response_text)
+
+    return {
+        "file": Path(file_path).name,
+        "total_pages": len(pages),
+        "entities": entities,
+    }
 
 
 # =============================================================================

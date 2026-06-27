@@ -18,7 +18,7 @@
             "items": [
                 {
                     "extracted_item_name": "CHETAK NY - TROUBLESHOOT HEATING UNIT / MAINTENANCE 2 ROOF TOP UNITS", //from ai
-                    "qty": "NA", //if no qty in invoice then consider 1
+                    "qty": null, //null if not present on the invoice
                     "unit_price": 672, //from ai
                     "line_total_price": 672, //from ai
                     "part_id": "50446", //from db
@@ -29,7 +29,7 @@
                 {
                     "extracted_item_name": "Item 2",
                     "charge_type": "service",
-                    "qty": "NA",
+                    "qty": null,
                     "unit_price": 672,
                     "line_total_price": 672,
                     "part_id": "50446", //from db

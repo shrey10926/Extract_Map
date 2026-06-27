@@ -19,8 +19,11 @@ from supplier_mapping import (
 # =========================================================
 ITEM_WEIGHTS = {"exact": 0.50, "fuzzy": 0.30, "semantic": 0.20}
 TOP_K_ITEM_CANDIDATES = 5          # candidate parts kept per line item
-ITEM_MATCH_THRESHOLD = 0.85        # auto-accept if best per-item score >= this
-DEFAULT_QTY = "1"                  # when invoice has no quantity
+# Gating: only a TRUE exact name match auto-accepts; every non-exact item goes to the LLM.
+
+# Messages returned when nothing matches in the DB
+SUPPLIER_NOT_FOUND_MSG = "Supplier Name match not found in Database"
+ITEM_NOT_FOUND_MSG = "Item Name match not found in Database"
 
 ITEM_RERANK_PROMPT = BASE_DIR / "Prompt" / "item_rerank.yaml"
 with open(ITEM_RERANK_PROMPT, encoding="utf-8") as f:
@@ -201,59 +204,82 @@ def rerank_items_with_llm(uncertain: List[Tuple[int, list]], line_items: list) -
 # =========================================================
 # OUTPUT SHAPING  (response_structure.json item shape)
 # =========================================================
-def _qty(it):
-    q = it.get("quantity")
-    return q if q not in (None, "", "NA") else DEFAULT_QTY
+def _clean(v):
+    """Entities not present in the invoice are null: normalize missing/empty markers to None."""
+    if v is None:
+        return None
+    if isinstance(v, str) and v.strip().upper() in ("", "NA", "N/A", "NULL", "NONE"):
+        return None
+    return v
+
+
+def _to_int(v):
+    """Coerce DB ids (numpy / pandas Int64) to plain int, or None."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+        return int(v)
+    except Exception:
+        return None
 
 
 def _base(it):
-    return {"extracted_item_name": it.get("item_name"), "qty": _qty(it),
-            "unit_price": it.get("rate"), "line_total_price": it.get("amount")}
+    return {"extracted_item_name": _clean(it.get("item_name")),
+            "qty": _clean(it.get("quantity")),
+            "unit_price": _clean(it.get("rate")),
+            "line_total_price": _clean(it.get("amount"))}
+
+
+def _matched_item(it, chosen, confidence, reason):
+    return {**_base(it),
+            "part_id": _to_int(chosen["Part_id"]) if chosen else None,
+            "part_name": chosen["part_name"] if chosen else None,
+            "match_confidence": confidence,
+            "match_reason": reason}
+
+
+def _not_found_item(it):
+    """Item name had no acceptable match in the supplier's catalog."""
+    return {**_base(it), "part_id": None, "part_name": None,
+            "match_confidence": 0, "match_reason": ITEM_NOT_FOUND_MSG}
 
 
 def _accepted_item(it, best):
-    return {**_base(it), "part_id": best["Part_id"], "part_name": best["part_name"],
-            "match_confidence": round(best["final"] * 100),
-            "match_reason": (f"Auto-matched: weighted name score {best['final']:.2f} "
-                             f"(exact={best['exact']:.0f}, fuzzy={best['fuzzy']:.0f}, "
-                             f"cosine={best['cosine']:.2f}) >= threshold {ITEM_MATCH_THRESHOLD}.")}
+    reason = "Exact name match to catalog part (auto-accepted; no LLM rerank needed)."
+    return _matched_item(it, best, 100, reason)
 
 
 def _resolve_uncertain(it, cands, decision):
     if decision is None:
         return _fallback_item(it, cands)
     if decision.get("no_match") or decision.get("best_candidate_rank") in (None, 0):
-        return {**_base(it), "part_id": None, "part_name": None, "match_confidence": 0,
-                "match_reason": decision.get("reason", "No suitable catalog match.")}
+        return _not_found_item(it)
     rank = decision.get("best_candidate_rank")
-    chosen = next((c for c in cands if c["rank"] == rank), cands[0] if cands else None)
+    chosen = next((c for c in cands if c["rank"] == rank), None)
+    if chosen is None:
+        return _not_found_item(it)
     conf = {"high": 90, "medium": 70, "low": 50}.get(decision.get("confidence", "low"), 50)
-    return {**_base(it), "part_id": chosen["Part_id"] if chosen else None,
-            "part_name": chosen["part_name"] if chosen else None,
-            "match_confidence": conf, "match_reason": decision.get("reason", "")}
+    return _matched_item(it, chosen, conf, decision.get("reason", ""))
 
 
 def _fallback_item(it, cands):
+    """LLM unavailable: fall back to the top name-scored candidate."""
     best = cands[0] if cands else None
     if not best:
-        return {**_base(it), "part_id": None, "part_name": None,
-                "match_confidence": 0, "match_reason": "No candidate parts available."}
-    return {**_base(it), "part_id": best["Part_id"], "part_name": best["part_name"],
-            "match_confidence": round(best["final"] * 100),
-            "match_reason": f"LLM unavailable; top scored candidate (name score {best['final']:.2f})."}
+        return _not_found_item(it)
+    reason = f"LLM unavailable; top name-scored candidate (score {best['final']:.2f})."
+    return _matched_item(it, best, round(best["final"] * 100), reason)
 
 
-def _unmatched_all(line_items, reason):
-    return [{**_base(it), "part_id": None, "part_name": None,
-             "match_confidence": 0, "match_reason": reason} for it in line_items]
+def _unmatched_all(line_items):
+    return [_not_found_item(it) for it in line_items]
 
 
 # =========================================================
 # MAIN — map all line items to the matched supplier's parts
 # =========================================================
 def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
-                                top_k_candidates=TOP_K_ITEM_CANDIDATES,
-                                threshold=ITEM_MATCH_THRESHOLD) -> Dict[str, Any]:
+                                top_k_candidates=TOP_K_ITEM_CANDIDATES) -> Dict[str, Any]:
     line_items = invoice_json.get("line_items", []) or []
     seid = int(invoice_json.get("Site_Id"))
     supplier_id = supplier_result.get("best_supplier_id")
@@ -261,13 +287,11 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
     if not line_items:
         return {"supplier_id": supplier_id, "items": []}
     if supplier_id is None or supplier_result.get("no_match"):
-        return {"supplier_id": supplier_id,
-                "items": _unmatched_all(line_items, "No supplier match; item mapping skipped.")}
+        return {"supplier_id": supplier_id, "items": _unmatched_all(line_items)}
 
     parts_df = get_supplier_parts(df_master, seid, supplier_id)
     if parts_df.empty:
-        return {"supplier_id": supplier_id,
-                "items": _unmatched_all(line_items, "Supplier has no catalog parts.")}
+        return {"supplier_id": supplier_id, "items": _unmatched_all(line_items)}
 
     # Reuse precomputed item vectors; encode the extracted names ONCE.
     _, text2row, vectors = load_item_resources(seid)
@@ -288,7 +312,8 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
     uncertain = []
     for i, cands in enumerate(cands_per_item):
         best = cands[0] if cands else None
-        if best and best["final"] >= threshold:
+        # Only a TRUE exact name match auto-accepts; everything else goes to the LLM.
+        if best and best["exact"] >= 1.0:
             results[i] = _accepted_item(line_items[i], best)
         else:
             uncertain.append((i, cands))
@@ -310,6 +335,77 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
 
 
 # =========================================================
+# FINAL RESPONSE ASSEMBLY
+# =========================================================
+def _supplier_confidence(supplier_result) -> int:
+    """0-100 confidence for the supplier match."""
+    if supplier_result.get("llm_reranked") and supplier_result.get("llm_reranked_candidates"):
+        conf = supplier_result["llm_reranked_candidates"][0].get("confidence", "low")
+        return {"high": 90, "medium": 70, "low": 50}.get(conf, 50)
+    return round(float(supplier_result.get("best_score", 0.0)) * 100)
+
+
+def _supplier_reason(supplier_result) -> str:
+    if supplier_result.get("llm_reranked") and supplier_result.get("llm_reranked_candidates"):
+        return supplier_result["llm_reranked_candidates"][0].get("reason", "")
+    q = supplier_result.get("query", {})
+    return (f"Matched extracted vendor '{q.get('extracted_supplier', '')}' to "
+            f"'{supplier_result.get('best_supplier_name', '')}' "
+            f"(ID: {_to_int(supplier_result.get('best_supplier_id'))}) "
+            f"with a weighted name score of {float(supplier_result.get('best_score', 0.0)):.2f}.")
+
+
+def build_invoice_response(invoice_json, df_master, model,
+                           invoice_num: int = 1, pages: str = "Page 1") -> Dict[str, Any]:
+    """Map one extracted invoice (supplier + items) into the final invoice object."""
+    line_items = invoice_json.get("line_items", []) or []
+    invoice_obj = {
+        "invoice_num": invoice_num,
+        "pages": pages,
+        "vendor_name": _clean(invoice_json.get("supplier_name")),
+        "supplier_id": None,
+        "supplier_name": None,
+        "supplier_confidence": 0,
+        "supplier_match_reason": "",
+        "status": "success",
+        "error": None,
+        "items": [],
+    }
+
+    # --- Supplier mapping ---
+    supplier_result = map_supplier_name_from_invoice(invoice_json, df_master, model)
+    supplier_id = supplier_result.get("best_supplier_id")
+
+    # Supplier not found -> skip item matching, but still echo the line items as not found.
+    if supplier_id is None or supplier_result.get("no_match"):
+        invoice_obj["supplier_match_reason"] = SUPPLIER_NOT_FOUND_MSG
+        invoice_obj["items"] = _unmatched_all(line_items)
+        return invoice_obj
+
+    invoice_obj["supplier_id"] = _to_int(supplier_id)
+    invoice_obj["supplier_name"] = supplier_result.get("best_supplier_name")
+    invoice_obj["supplier_confidence"] = _supplier_confidence(supplier_result)
+    invoice_obj["supplier_match_reason"] = _supplier_reason(supplier_result)
+
+    # --- Item mapping (scoped to the matched supplier) ---
+    item_result = map_line_items_from_invoice(invoice_json, supplier_result, df_master, model)
+    invoice_obj["items"] = item_result["items"]
+    return invoice_obj
+
+
+def build_file_response(invoice_json, df_master, model,
+                        file_name: str, total_pages: int = 1) -> Dict[str, Any]:
+    """Top-level response for one processed file (wraps a single invoice for now)."""
+    try:
+        invoice_obj = build_invoice_response(invoice_json, df_master, model)
+        return {"file": file_name, "status": "success", "total_pages": total_pages,
+                "error": None, "invoices": [invoice_obj]}
+    except Exception as e:
+        return {"file": file_name, "status": "error", "total_pages": total_pages,
+                "error": str(e), "invoices": []}
+
+
+# =========================================================
 # EXAMPLE USAGE
 # =========================================================
 if __name__ == "__main__":
@@ -327,7 +423,9 @@ if __name__ == "__main__":
     df_master = load_master_dataframe()
     model = load_embedding_model()
 
-    supplier_result = map_supplier_name_from_invoice(invoice_json, df_master, model)
-    item_result = map_line_items_from_invoice(invoice_json, supplier_result, df_master, model)
+    response = build_file_response(
+        invoice_json, df_master, model,
+        file_name="0918-006708380.pdf", total_pages=1
+    )
 
-    print(json.dumps(item_result, indent=2, default=str))
+    print(json.dumps(response, indent=2, default=str))

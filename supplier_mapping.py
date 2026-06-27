@@ -42,7 +42,10 @@ WEIGHTS = {
 TOP_K_FINAL = 10
 
 # LLM Reranking config
-LLM_RERANK_THRESHOLD = 0.85
+# With WEIGHTS (exact 0.5 / fuzzy 0.3 / semantic 0.2) an exact match scores 1.0 while any
+# non-exact match caps at 0.5. So any threshold in (0.5, 1.0) auto-accepts only exact matches
+# and sends everything else to the LLM reranker. 0.90 keeps a clear margin.
+LLM_RERANK_THRESHOLD = 0.90
 TOP_K_RERANK = 5
 PARTS_PER_CANDIDATE = 3
 
@@ -558,12 +561,12 @@ def merge_and_rank_candidates(
 # =========================================================
 # LLM RERANKING
 # =========================================================
-RERANK_PROMPT = BASE_DIR / "Prompt" / "rerank.yaml"
+RERANK_PROMPT = BASE_DIR / "Prompt" / "supplier_rerank.yaml"
 with open(RERANK_PROMPT, encoding="utf-8") as f:
     prompt = yaml.safe_load(f)
 RERANK_SYSTEM_PROMPT = prompt["system_prompt"]
 
-SCHEMA_FILE = BASE_DIR / "Response_Schema" / "rerank_schema.json"
+SCHEMA_FILE = BASE_DIR / "Response_Schema" / "supplier_rerank_schema.json"
 with open(SCHEMA_FILE, "r") as f:
     RERANK_RESPONSE_SCHEMA = json.load(f)
 

@@ -32,7 +32,7 @@ system_prompt: >+
   4. Line Items (Array of Objects):
     - Invoices typically contain a table of items. You must extract every valid product/service row in this table.
     - Item Name/Description: The name of the product or service. If the description spans multiple lines, concatenate them into a single string. Headers may say "Item Name", "Description", "Particulars", "Product", etc.
-    - Quantity: The number of units. Headers may say "Qty", "Quantity", "Hours", or "Units". Output as a number. *Rule:* If the Quantity is blank or missing, but a valid Rate and Amount exist, default the Quantity to 1.
+    - Quantity: The number of units. Headers may say "Qty", "Quantity", "Hours", or "Units". Output as a number. *Rule:* If the Quantity is blank, missing, or not present on the invoice, output `null`. Do not default or invent a value.
     - Rate (Unit Price): The cost per single unit. Headers may say "Rate", "Price", "Unit Price", or "Cost". Output as a number.
     - Amount (Total Price): The total for that specific line item (Quantity * Rate). Headers may say "Amount", "Total", "Line Total", or "Net". Output as a number.
     - CRITICAL GUARDRAILS FOR LINE ITEMS: 
