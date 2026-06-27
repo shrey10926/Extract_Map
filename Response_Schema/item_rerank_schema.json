@@ -1,0 +1,37 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "item_index": {
+                        "type": "integer",
+                        "description": "Index of the invoice line item being matched."
+                    },
+                    "best_candidate_rank": {
+                        "type": ["integer", "null"],
+                        "description": "Rank of the chosen candidate part, or null if no match."
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"]
+                    },
+                    "no_match": {
+                        "type": "boolean",
+                        "description": "True if none of the candidates match this line item."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief explanation for the decision."
+                    }
+                },
+                "required": ["item_index", "best_candidate_rank", "confidence", "no_match", "reason"]
+            }
+        }
+    },
+    "required": ["items"]
+}
