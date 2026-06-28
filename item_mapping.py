@@ -55,11 +55,14 @@ def normalize_item_name_semantic(text: str) -> str:
 # =========================================================
 # ITEM VECTOR STORE — reconstruct precomputed embeddings (no re-encode)
 # =========================================================
-_ITEM_RESOURCE_CACHE: Dict[int, Tuple[pd.DataFrame, Dict[str, int], np.ndarray]] = {}
+_ITEM_RESOURCE_CACHE: Dict[int, Tuple[pd.DataFrame, np.ndarray]] = {}
 
 
-def load_item_resources(seid: int) -> Tuple[pd.DataFrame, Dict[str, int], np.ndarray]:
-    """Load the item index + metadata for a site and reconstruct all vectors once."""
+def load_item_resources(seid: int) -> Tuple[pd.DataFrame, np.ndarray]:
+    """Load the item index + metadata for a site and reconstruct all vectors once.
+
+    `metadata_df` includes Supplier_Id and Part_id; `vectors` is row-aligned to metadata_df.
+    """
     if seid in _ITEM_RESOURCE_CACHE:
         return _ITEM_RESOURCE_CACHE[seid]
 
@@ -76,11 +79,7 @@ def load_item_resources(seid: int) -> Tuple[pd.DataFrame, Dict[str, int], np.nda
     # Pull already-computed vectors straight out of the flat index (memory copy, no model).
     vectors = index.reconstruct_n(0, index.ntotal).astype(np.float32)
 
-    # Map normalized item text -> row, so any candidate part can reuse its vector.
-    text2row = {str(t).strip(): i
-                for i, t in enumerate(metadata_df["source_text"].astype(str).tolist())}
-
-    _ITEM_RESOURCE_CACHE[seid] = (metadata_df, text2row, vectors)
+    _ITEM_RESOURCE_CACHE[seid] = (metadata_df, vectors)
     return _ITEM_RESOURCE_CACHE[seid]
 
 
@@ -98,16 +97,27 @@ def get_supplier_parts(df_master: pd.DataFrame, seid: int, supplier_id: Any) -> 
     return df
 
 
-def get_candidate_vectors(parts_df: pd.DataFrame, text2row: Dict[str, int],
-                          vectors: np.ndarray, model: SentenceTransformer) -> np.ndarray:
-    """Reuse precomputed vectors for each candidate part; encode only the rare miss."""
-    texts = [t.strip() for t in parts_df["item_name_semantic"].astype(str).tolist()]
-    out: List[Optional[np.ndarray]] = [None] * len(texts)
+def get_candidate_vectors(parts_df: pd.DataFrame, metadata_df: pd.DataFrame,
+                          vectors: np.ndarray, supplier_id,
+                          model: SentenceTransformer) -> np.ndarray:
+    """Attach each candidate part's precomputed vector by Part_id, using only this supplier's
+    rows in the item index. Encode only the rare miss."""
+    # Restrict the index rows to the matched supplier, then map Part_id -> vector row.
+    mask = (metadata_df["Supplier_Id"] == supplier_id).to_numpy()
+    sup_rows = np.nonzero(mask)[0]
+    sup_part_ids = metadata_df.loc[mask, "Part_id"].tolist()
+    part_to_row: Dict[Any, int] = {}
+    for pid, row in zip(sup_part_ids, sup_rows.tolist()):
+        part_to_row.setdefault(_to_int(pid), int(row))   # first wins; dup rows share an identical vector
+
+    out: List[Optional[np.ndarray]] = [None] * len(parts_df)
     miss_pos, miss_text = [], []
-    for i, t in enumerate(texts):
-        row = text2row.get(t)
+    part_ids = parts_df["Part_id"].tolist()
+    sem_texts = parts_df["item_name_semantic"].astype(str).tolist()
+    for i, pid in enumerate(part_ids):
+        row = part_to_row.get(_to_int(pid))
         if row is None:
-            miss_pos.append(i); miss_text.append(t)
+            miss_pos.append(i); miss_text.append(sem_texts[i].strip())
         else:
             out[i] = vectors[row]
     if miss_text:
@@ -293,9 +303,9 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
     if parts_df.empty:
         return {"supplier_id": supplier_id, "items": _unmatched_all(line_items)}
 
-    # Reuse precomputed item vectors; encode the extracted names ONCE.
-    _, text2row, vectors = load_item_resources(seid)
-    cand_vecs = get_candidate_vectors(parts_df, text2row, vectors, model)
+    # Reuse precomputed item vectors (filtered to this supplier); encode the extracted names ONCE.
+    metadata_df, vectors = load_item_resources(seid)
+    cand_vecs = get_candidate_vectors(parts_df, metadata_df, vectors, supplier_id, model)
 
     extracted = [str(it.get("item_name") or "") for it in line_items]
     query_fuzzy = [normalize_item_name_fuzzy(t) for t in extracted]
