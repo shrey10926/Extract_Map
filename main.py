@@ -2,12 +2,13 @@
 # Run from the project root:  python main.py
 # Requires:  aws sso login --profile shrey_bedrock
 #
-# NOTE: S3 download from signedUrl is intentionally skipped for now.
-#       Point INVOICE_PATH at a local invoice file. To re-enable downloading
-#       later, fetch the file from req["signedUrl"] and pass that path instead.
+# Input: a request JSON {"siteid": int, "signedUrl": "<S3 URL>"}. The invoice is downloaded
+# from signedUrl into memory (no temp file) and passed straight to extraction.
 from __future__ import annotations
 import json
 from pathlib import Path
+from urllib.parse import urlparse, unquote
+from urllib.request import urlopen
 
 from extract_entities import extract_invoice
 from supplier_mapping import load_master_dataframe, load_embedding_model
@@ -15,9 +16,7 @@ from item_mapping import build_file_response
 
 BASE_DIR = Path(__file__).resolve().parent
 REQUEST_FILE = BASE_DIR / "request_structure.json"
-
-# S3 download skipped — use a local invoice file.
-INVOICE_PATH = BASE_DIR / "1008_1234.pdf"
+DOWNLOAD_TIMEOUT = 60   # seconds, for the invoice download
 
 # Heavy resources are loaded once and reused across invoices.
 _DF_MASTER = None
@@ -44,24 +43,42 @@ def load_request(request_input):
     return json.loads(s)
 
 
-def process_invoice(invoice_path, site_id, password: str | None = None) -> dict:
-    """
-    End-to-end (local file): extract -> supplier mapping -> item mapping -> final response.
+def _filename_from_url(signed_url: str) -> str:
+    return Path(unquote(urlparse(signed_url).path)).name or "invoice"
 
-    S3 download is skipped; pass a local invoice file path.
+
+def download_invoice_bytes(signed_url: str, timeout: int = DOWNLOAD_TIMEOUT):
+    """Download the invoice from a (pre-signed) URL into memory — one GET, no temp file."""
+    with urlopen(signed_url, timeout=timeout) as resp:
+        return resp.read(), _filename_from_url(signed_url)
+
+
+def process_invoice(request, password: str | None = None) -> dict:
+    """
+    End-to-end: read request -> download invoice (in memory) -> extract -> supplier mapping
+    -> item mapping -> final response.
+
+    `request` is a dict / JSON string / path to a request JSON ({siteid, signedUrl}).
     Returns the final {file, status, total_pages, error, invoices:[...]} structure.
     """
-    file_name = Path(invoice_path).name
+    req = load_request(request)
+    site_id = req.get("siteid")
+    signed_url = req.get("signedUrl")
+    file_name = _filename_from_url(signed_url) if signed_url else None
+
     try:
         df_master, model = _get_resources()
 
-        # 1) Extract entities  ->  {file, total_pages, entities}
-        extracted = extract_invoice(str(invoice_path), password=password)
+        # 1) Download the invoice from the pre-signed S3 URL into memory (no temp file)
+        data, file_name = download_invoice_bytes(signed_url)
 
-        # 2) Attach Site_Id (mapping is scoped by site)
+        # 2) Extract entities (opened from the in-memory bytes) -> {file, total_pages, entities}
+        extracted = extract_invoice(data, filename=file_name, password=password)
+
+        # 3) Attach Site_Id (mapping is scoped by site)
         invoice_json = {**extracted["entities"], "Site_Id": site_id}
 
-        # 3) Supplier + item mapping -> final structured response
+        # 4) Supplier + item mapping -> final structured response
         return build_file_response(
             invoice_json, df_master, model,
             file_name=extracted["file"],
@@ -74,10 +91,7 @@ def process_invoice(invoice_path, site_id, password: str | None = None) -> dict:
 
 
 if __name__ == "__main__":
-    req = load_request(REQUEST_FILE)
-    site_id = req.get("siteid")
-
-    response = process_invoice(INVOICE_PATH, site_id)
+    response = process_invoice(REQUEST_FILE)
 
     print(json.dumps(response, indent=2, default=str))
     with open(BASE_DIR / "final_response.json", "w", encoding="utf-8") as f:

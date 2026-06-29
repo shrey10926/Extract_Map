@@ -92,27 +92,25 @@ def preprocess_image(
 # =============================================================================
 
 def process_pdf(
-    file_path: str,
-    password: Optional[str] = None
+    data: bytes,
+    password: Optional[str] = None,
+    base_name: str = "invoice",
+    save_images: bool = False
 ) -> List[Dict[str, Any]]:
 
     processed_pages = []
 
-    doc = fitz.open(file_path)
+    doc = fitz.open(stream=data, filetype="pdf")   # open from memory, no temp file
 
     try:
 
         if doc.is_encrypted:
 
             if not password:
-                raise ValueError(
-                    f"PDF '{file_path}' is encrypted."
-                )
+                raise ValueError("PDF is encrypted but no password was provided.")
 
             if not doc.authenticate(password):
-                raise ValueError(
-                    f"Incorrect password for '{file_path}'"
-                )
+                raise ValueError("Incorrect password for the PDF.")
 
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
@@ -128,21 +126,22 @@ def process_pdf(
                 pix.samples
             )
 
-            base_name = Path(file_path).stem
-            output_dir = OUTPUT_DIR / base_name
-            output_dir.mkdir(parents=True, exist_ok=True)
-            save_path = output_dir / f"page_{page_num + 1}.png"
+            save_path = None
+            if save_images:
+                output_dir = OUTPUT_DIR / base_name
+                output_dir.mkdir(parents=True, exist_ok=True)
+                save_path = str(output_dir / f"page_{page_num + 1}.png")
 
             png_bytes = preprocess_image(
                 img=img,
-                output_path=str(save_path)
+                output_path=save_path
             )
 
             processed_pages.append(
                 {
                     "page_number": page_num + 1,
                     "png_bytes": png_bytes,
-                    "saved_path": str(save_path)
+                    "saved_path": save_path
                 }
             )
 
@@ -156,10 +155,14 @@ def process_pdf(
 # TIFF PROCESSING
 # =============================================================================
 
-def process_tiff(file_path: str) -> List[Dict[str, Any]]:
+def process_tiff(
+    data: bytes,
+    base_name: str = "invoice",
+    save_images: bool = False
+) -> List[Dict[str, Any]]:
 
     processed_pages = []
-    img = Image.open(file_path)
+    img = Image.open(io.BytesIO(data))   # open from memory
 
     page_num = 1
     while True:
@@ -167,22 +170,23 @@ def process_tiff(file_path: str) -> List[Dict[str, Any]]:
         try:
             frame = img.copy()
 
-            base_name = Path(file_path).stem
-            output_dir = OUTPUT_DIR / base_name
-            output_dir.mkdir(parents=True, exist_ok=True)
-            save_path = output_dir / f"page_{page_num}.png"
+            save_path = None
+            if save_images:
+                output_dir = OUTPUT_DIR / base_name
+                output_dir.mkdir(parents=True, exist_ok=True)
+                save_path = str(output_dir / f"page_{page_num}.png")
 
             print(f"Processing page: {page_num}")
             png_bytes = preprocess_image(
                 img=frame,
-                output_path=str(save_path)
+                output_path=save_path
             )
 
             processed_pages.append(
                 {
                     "page_number": page_num,
                     "png_bytes": png_bytes,
-                    "saved_path": str(save_path)
+                    "saved_path": save_path
                 }
             )
 
@@ -199,27 +203,30 @@ def process_tiff(file_path: str) -> List[Dict[str, Any]]:
 # JPG / PNG / WEBP / BMP
 # =============================================================================
 
-def process_image_file(file_path: str) -> List[Dict[str, Any]]:
+def process_image_file(
+    data: bytes,
+    base_name: str = "invoice",
+    save_images: bool = False
+) -> List[Dict[str, Any]]:
 
-    img = Image.open(file_path)
+    img = Image.open(io.BytesIO(data))   # open from memory
 
-    base_name = Path(file_path).stem
-
-    output_dir = OUTPUT_DIR / base_name
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    save_path = output_dir / f"{base_name}.png"
+    save_path = None
+    if save_images:
+        output_dir = OUTPUT_DIR / base_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        save_path = str(output_dir / f"{base_name}.png")
 
     png_bytes = preprocess_image(
         img=img,
-        output_path=str(save_path)
+        output_path=save_path
     )
 
     return [
         {
             "page_number": 1,
             "png_bytes": png_bytes,
-            "saved_path": str(save_path)
+            "saved_path": save_path
         }
     ]
 
@@ -228,18 +235,40 @@ def process_image_file(file_path: str) -> List[Dict[str, Any]]:
 # DOCUMENT ROUTER
 # =============================================================================
 
+def _load_source(
+    source,
+    filename: Optional[str] = None
+):
+    """
+    Return (data_bytes, name, ext) from either:
+      - raw bytes (then `filename` with an extension is required), or
+      - a filesystem path (str / Path).
+    """
+    if isinstance(source, (bytes, bytearray)):
+        if not filename:
+            raise ValueError("filename (with extension) is required when passing raw bytes.")
+        name = Path(filename).name
+        return bytes(source), name, Path(name).suffix.lower()
+
+    p = Path(source)
+    return p.read_bytes(), p.name, p.suffix.lower()
+
+
 def convert_document(
-    file_path: str,
-    password: Optional[str] = None
+    data: bytes,
+    ext: str,
+    password: Optional[str] = None,
+    base_name: str = "invoice",
+    save_images: bool = False
 ) -> List[Dict[str, Any]]:
 
-    ext = Path(file_path).suffix.lower()
+    ext = ext.lower()
 
     if ext == ".pdf":
-        return process_pdf(file_path, password)
+        return process_pdf(data, password=password, base_name=base_name, save_images=save_images)
 
     elif ext in (".tif", ".tiff"):
-        return process_tiff(file_path)
+        return process_tiff(data, base_name=base_name, save_images=save_images)
 
     elif ext in (
         ".jpg",
@@ -248,7 +277,7 @@ def convert_document(
         ".webp",
         ".bmp"
     ):
-        return process_image_file(file_path)
+        return process_image_file(data, base_name=base_name, save_images=save_images)
 
     raise ValueError(
         f"Unsupported file type: {ext}"
@@ -286,10 +315,16 @@ def build_content_blocks(
 # =============================================================================
 
 def extract_invoice(
-    file_path: str,
-    password: Optional[str] = None
+    source,
+    password: Optional[str] = None,
+    filename: Optional[str] = None,
+    save_images: bool = False
 ) -> dict:
     """
+    `source` may be raw bytes (then `filename` with an extension is required) or a file path.
+    Set `save_images=True` to also write the preprocessed page PNGs to disk (off by default
+    to minimize IO).
+
     Returns:
         {
             "file": <source filename>,
@@ -298,9 +333,14 @@ def extract_invoice(
         }
     """
 
+    data, name, ext = _load_source(source, filename)
+
     pages = convert_document(
-        file_path=file_path,
-        password=password
+        data=data,
+        ext=ext,
+        password=password,
+        base_name=Path(name).stem,
+        save_images=save_images
     )
 
     print(f"Pages processed: {len(pages)}")
@@ -352,7 +392,7 @@ def extract_invoice(
     entities = json.loads(response_text)
 
     return {
-        "file": Path(file_path).name,
+        "file": name,
         "total_pages": len(pages),
         "entities": entities,
     }
