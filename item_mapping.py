@@ -415,27 +415,27 @@ def build_file_response(invoice_json, df_master, model,
                 "error": str(e), "invoices": []}
 
 
-# =========================================================
-# EXAMPLE USAGE
-# =========================================================
-if __name__ == "__main__":
-    invoice_json = {
-        "Site_Id": 11,
-        "supplier_name": "Republic Services",
-        "invoice_date": "February 28, 2028",
-        "invoice_number": "0918-006708380",
-        "line_items": [
-            {"item_name": "Waste Container 40 Yd, On Call Service",
-             "quantity": "1.0000", "rate": "174.08", "amount": "174.08"},
-        ],
-        "total_invoice_amount": "174.08",
-    }
-    df_master = load_master_dataframe()
-    model = load_embedding_model()
+# # =========================================================
+# # EXAMPLE USAGE
+# # =========================================================
+# if __name__ == "__main__":
+#     invoice_json = {
+#         "Site_Id": 11,
+#         "supplier_name": "Republic Services",
+#         "invoice_date": "February 28, 2028",
+#         "invoice_number": "0918-006708380",
+#         "line_items": [
+#             {"item_name": "Waste Container 40 Yd, On Call Service",
+#              "quantity": "1.0000", "rate": "174.08", "amount": "174.08"},
+#         ],
+#         "total_invoice_amount": "174.08",
+#     }
+#     df_master = load_master_dataframe()
+#     model = load_embedding_model()
 
-    response = build_file_response(
-        invoice_json, df_master, model,
-        file_name="0918-006708380.pdf", total_pages=1
-    )
+#     response = build_file_response(
+#         invoice_json, df_master, model,
+#         file_name="0918-006708380.pdf", total_pages=1
+#     )
 
-    print(json.dumps(response, indent=2, default=str))
+#     print(json.dumps(response, indent=2, default=str))

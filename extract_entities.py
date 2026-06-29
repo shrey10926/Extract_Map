@@ -398,18 +398,18 @@ def extract_invoice(
     }
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
+# # =============================================================================
+# # MAIN
+# # =============================================================================
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    start = time.time()
-    invoice_path = r"Invoices\DPIL\01029292.TIF"
-    result = extract_invoice(invoice_path)
+#     start = time.time()
+#     invoice_path = r"WhatsApp Image 2026-06-29 at 18.53.11.jpeg"
+#     result = extract_invoice(invoice_path)
 
-    with open("result.json", "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=4, ensure_ascii=False)
+#     with open("result.json", "w", encoding="utf-8") as f:
+#         json.dump(result, f, indent=4, ensure_ascii=False)
 
-    print("Extraction complete.")
-    print(f"Time taken: {time.time() - start} seconds")
+#     print("Extraction complete.")
+#     print(f"Time taken: {time.time() - start} seconds")

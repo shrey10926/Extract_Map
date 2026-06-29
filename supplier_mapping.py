@@ -857,94 +857,94 @@ def map_supplier_name_from_invoice(
     return result
 
 
-# =========================================================
-# EXAMPLE USAGE
-# =========================================================
+# # =========================================================
+# # EXAMPLE USAGE
+# # =========================================================
 
-if __name__ == "__main__":
-    # Example invoice JSON
-    invoice_json = {
-        "Site_Id": 11,
-    "supplier_name": "Republic Services",
-    "invoice_date": "February 28, 2028",
-    "invoice_number": "0918-006708380",
-    "line_items": [
-        {
-            "item_name": "Waste Container 40 Yd, On Call Service",
-            "quantity": "1.0000",
-            "rate": "174.08",
-            "amount": "174.08"
-        },
-        {
-            "item_name": "Waste Container 40 Yd, On Call Service",
-            "quantity": "1.0000",
-            "rate": "122.70",
-            "amount": "122.70"
-        },
-        {
-            "item_name": "Waste Container 40 Yd, On Call Service",
-            "quantity": "1.0000",
-            "rate": "1646.56",
-            "amount": "1646.56"
-        },
-        {
-            "item_name": "Waste Container 40 Yd, On Call Service",
-            "quantity": "1.0000",
-            "rate": "174.08",
-            "amount": "174.08"
-        },
-        {
-            "item_name": "Waste Container 40 Yd, On Call Service",
-            "quantity": "1.0000",
-            "rate": "1646.56",
-            "amount": "1646.56"
-        },
-        {
-            "item_name": "Waste Container 40 Yd, On Call Service",
-            "quantity": "1.0000",
-            "rate": "1646.56",
-            "amount": "1646.56"
-        }
-    ],
-    "total_invoice_amount": "5287.84"
-}
+# if __name__ == "__main__":
+#     # Example invoice JSON
+#     invoice_json = {
+#         "Site_Id": 11,
+#     "supplier_name": "Republic Services",
+#     "invoice_date": "February 28, 2028",
+#     "invoice_number": "0918-006708380",
+#     "line_items": [
+#         {
+#             "item_name": "Waste Container 40 Yd, On Call Service",
+#             "quantity": "1.0000",
+#             "rate": "174.08",
+#             "amount": "174.08"
+#         },
+#         {
+#             "item_name": "Waste Container 40 Yd, On Call Service",
+#             "quantity": "1.0000",
+#             "rate": "122.70",
+#             "amount": "122.70"
+#         },
+#         {
+#             "item_name": "Waste Container 40 Yd, On Call Service",
+#             "quantity": "1.0000",
+#             "rate": "1646.56",
+#             "amount": "1646.56"
+#         },
+#         {
+#             "item_name": "Waste Container 40 Yd, On Call Service",
+#             "quantity": "1.0000",
+#             "rate": "174.08",
+#             "amount": "174.08"
+#         },
+#         {
+#             "item_name": "Waste Container 40 Yd, On Call Service",
+#             "quantity": "1.0000",
+#             "rate": "1646.56",
+#             "amount": "1646.56"
+#         },
+#         {
+#             "item_name": "Waste Container 40 Yd, On Call Service",
+#             "quantity": "1.0000",
+#             "rate": "1646.56",
+#             "amount": "1646.56"
+#         }
+#     ],
+#     "total_invoice_amount": "5287.84"
+# }
 
-    # Load data/model
-    master_df = load_master_dataframe()
-    model = load_embedding_model()
+#     # Load data/model
+#     master_df = load_master_dataframe()
+#     model = load_embedding_model()
 
-    result = map_supplier_name_from_invoice(
-        invoice_json=invoice_json,
-        df_master=master_df,
-        model=model,
-        top_k_fuzzy=10,
-        top_k_semantic=10,
-        fuzzy_cutoff=80,
-        top_k_final=10
-    )
+#     result = map_supplier_name_from_invoice(
+#         invoice_json=invoice_json,
+#         df_master=master_df,
+#         model=model,
+#         top_k_fuzzy=10,
+#         top_k_semantic=10,
+#         fuzzy_cutoff=80,
+#         top_k_final=10
+#     )
 
-    print("\nQUERY:")
-    print(result["query"])
+#     print("\nQUERY:")
+#     print(result["query"])
 
-    print("\nBEST MATCH:")
-    print("Supplier_Id  :", result["best_supplier_id"])
-    print("Supplier_Name:", result["best_supplier_name"])
-    print("Score        :", result["best_score"])
+#     print("\nBEST MATCH:")
+#     print("Supplier_Id  :", result["best_supplier_id"])
+#     print("Supplier_Name:", result["best_supplier_name"])
+#     print("Score        :", result["best_score"])
 
-    print("\nRANKED CANDIDATES:")
-    print(result["ranked_candidates"].to_string(index=False))
+#     print("\nRANKED CANDIDATES:")
+#     print(result["ranked_candidates"].to_string(index=False))
 
-    print("\nLLM RERANKED:", result["llm_reranked"])
-    if result["llm_reranked"]:
-        print("No Match:", result["no_match"])
-        if result["no_match"]:
-            print("Reason:", result["no_match_reason"])
-        print("\nRERANKED CANDIDATES:")
-        for c in result["llm_reranked_candidates"]:
-            print(
-                f"  Original Rank {c['original_rank']}: "
-                f"{c['Supplier_Name']} (Id={c['Supplier_Id']}) "
-                f"| Confidence: {c['confidence']} "
-                f"| Score: {c['final_score']:.4f} "
-                f"| Reason: {c['reason']}"
-            )
+#     print("\nLLM RERANKED:", result["llm_reranked"])
+#     if result["llm_reranked"]:
+#         print("No Match:", result["no_match"])
+#         if result["no_match"]:
+#             print("Reason:", result["no_match_reason"])
+#         print("\nRERANKED CANDIDATES:")
+#         for c in result["llm_reranked_candidates"]:
+#             print(
+#                 f"  Original Rank {c['original_rank']}: "
+#                 f"{c['Supplier_Name']} (Id={c['Supplier_Id']}) "
+#                 f"| Confidence: {c['confidence']} "
+#                 f"| Score: {c['final_score']:.4f} "
+#                 f"| Reason: {c['reason']}"
+#             )

@@ -15,7 +15,7 @@ from supplier_mapping import load_master_dataframe, load_embedding_model
 from item_mapping import build_file_response
 
 BASE_DIR = Path(__file__).resolve().parent
-REQUEST_FILE = BASE_DIR / "request_structure.json"
+REQUEST_FILE = BASE_DIR / "sample_request2.json"
 DOWNLOAD_TIMEOUT = 60   # seconds, for the invoice download
 
 # Heavy resources are loaded once and reused across invoices.
