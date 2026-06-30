@@ -318,7 +318,7 @@ def extract_invoice(
     source,
     password: Optional[str] = None,
     filename: Optional[str] = None,
-    save_images: bool = False
+    save_images: bool = True
 ) -> dict:
     """
     `source` may be raw bytes (then `filename` with an extension is required) or a file path.

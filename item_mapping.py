@@ -6,7 +6,7 @@ from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 
 # Reuse data/model/bedrock + normalization primitives already built for suppliers
-from supplier_mapping_2 import (
+from supplier_mapping import (
     BASE_DIR, FAISS_DIR, METADATA_DIR, BEDROCK_CONFIG,
     _get_bedrock_client, load_master_dataframe, load_embedding_model,
     lowercase_text, trim_extra_spaces, unicode_normalization,
