@@ -53,7 +53,7 @@ LLM_RERANK_THRESHOLD = 0.90
 TOP_K_RERANK = 5
 PARTS_PER_CANDIDATE = 3
 
-with open("bedrock_config.yaml", "r") as f:
+with open(BASE_DIR / "bedrock_config.yaml", "r") as f:
     BEDROCK_CONFIG = yaml.safe_load(f)
 
 _bedrock_client_cache = None
