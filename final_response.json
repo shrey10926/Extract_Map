@@ -1,0 +1,51 @@
+{
+    "file": "01029291.TIF",
+    "status": "success",
+    "total_pages": 6,
+    "error": null,
+    "invoices": [
+        {
+            "invoice_num": 1,
+            "pages": "Page 1",
+            "vendor_name": "PENSKE TRUCK LEASING CO., L.P.",
+            "supplier_id": 224583,
+            "supplier_name": "PENSKE TRUCK LEASING",
+            "supplier_confidence": 90,
+            "supplier_match_reason": "Exact name match (PENSKE TRUCK LEASING vs PENSKE TRUCK LEASING CO., L.P.). Sample products perfectly align with invoice line items: TRUCK LEASE, MAINTENANCE, and TRUCKING EXPENSE match the lease units, maintenance, and rental services on the invoice. Highest fuzzy score (95.0) and strong cosine score (0.9397).",
+            "status": "success",
+            "error": null,
+            "items": [
+                {
+                    "extracted_item_name": "Lease Units",
+                    "qty": "5",
+                    "unit_price": "16870.21",
+                    "line_total_price": "16870.21",
+                    "part_id": 93721,
+                    "part_name": "TRUCK LEASE,FUEL,MAINTANENCE,TRUCKING EXPENSE",
+                    "match_confidence": 90,
+                    "match_reason": "Invoice item 'Lease Units' directly aligns with Rank 1 catalog part 'TRUCK LEASE,FUEL,MAINTANENCE,TRUCKING EXPENSE' which explicitly includes 'LEASE' and has the highest matching scores (Final=0.3854, Fuzzy=85.5)."
+                },
+                {
+                    "extracted_item_name": "Maintenance - PEG units",
+                    "qty": "12",
+                    "unit_price": "6163.67",
+                    "line_total_price": "6163.67",
+                    "part_id": 93721,
+                    "part_name": "TRUCK LEASE,FUEL,MAINTANENCE,TRUCKING EXPENSE",
+                    "match_confidence": 90,
+                    "match_reason": "Invoice item 'Maintenance - PEG units' matches Rank 1 catalog part 'TRUCK LEASE,FUEL,MAINTANENCE,TRUCKING EXPENSE' which explicitly includes 'MAINTANENCE' (maintenance) and is the best semantic fit among candidates."
+                },
+                {
+                    "extracted_item_name": "Rental units",
+                    "qty": "3",
+                    "unit_price": "5438.74",
+                    "line_total_price": "5438.74",
+                    "part_id": 93721,
+                    "part_name": "TRUCK LEASE,FUEL,MAINTANENCE,TRUCKING EXPENSE",
+                    "match_confidence": 70,
+                    "match_reason": "Invoice item 'Rental units' best matches Rank 2 catalog part 'TRUCK LEASE,FUEL,MAINTANENCE,TRUCKING EXPENSE' as 'rental' and 'lease' are semantically similar concepts for equipment/vehicle usage, with higher Cosine score (0.5845) than Rank 1."
+                }
+            ]
+        }
+    ]
+}
