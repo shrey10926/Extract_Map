@@ -396,20 +396,3 @@ def extract_invoice(
         "total_pages": len(pages),
         "entities": entities,
     }
-
-
-# # =============================================================================
-# # MAIN
-# # =============================================================================
-
-# if __name__ == "__main__":
-
-#     start = time.time()
-#     invoice_path = r"WhatsApp Image 2026-06-29 at 18.53.11.jpeg"
-#     result = extract_invoice(invoice_path)
-
-#     with open("result.json", "w", encoding="utf-8") as f:
-#         json.dump(result, f, indent=4, ensure_ascii=False)
-
-#     print("Extraction complete.")
-#     print(f"Time taken: {time.time() - start} seconds")

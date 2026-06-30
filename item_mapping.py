@@ -1,4 +1,3 @@
-# aws sso login --profile shrey_bedrock
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -7,7 +6,7 @@ from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 
 # Reuse data/model/bedrock + normalization primitives already built for suppliers
-from supplier_mapping import (
+from supplier_mapping_2 import (
     BASE_DIR, FAISS_DIR, METADATA_DIR, BEDROCK_CONFIG,
     _get_bedrock_client, load_master_dataframe, load_embedding_model,
     lowercase_text, trim_extra_spaces, unicode_normalization,
@@ -413,29 +412,3 @@ def build_file_response(invoice_json, df_master, model,
     except Exception as e:
         return {"file": file_name, "status": "error", "total_pages": total_pages,
                 "error": str(e), "invoices": []}
-
-
-# # =========================================================
-# # EXAMPLE USAGE
-# # =========================================================
-# if __name__ == "__main__":
-#     invoice_json = {
-#         "Site_Id": 11,
-#         "supplier_name": "Republic Services",
-#         "invoice_date": "February 28, 2028",
-#         "invoice_number": "0918-006708380",
-#         "line_items": [
-#             {"item_name": "Waste Container 40 Yd, On Call Service",
-#              "quantity": "1.0000", "rate": "174.08", "amount": "174.08"},
-#         ],
-#         "total_invoice_amount": "174.08",
-#     }
-#     df_master = load_master_dataframe()
-#     model = load_embedding_model()
-
-#     response = build_file_response(
-#         invoice_json, df_master, model,
-#         file_name="0918-006708380.pdf", total_pages=1
-#     )
-
-#     print(json.dumps(response, indent=2, default=str))

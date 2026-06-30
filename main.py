@@ -1,9 +1,3 @@
-# main.py — end-to-end invoice extraction + mapping pipeline
-# Run from the project root:  python main.py
-# Requires:  aws sso login --profile shrey_bedrock
-#
-# Input: a request JSON {"siteid": int, "signedUrl": "<S3 URL>"}. The invoice is downloaded
-# from signedUrl into memory (no temp file) and passed straight to extraction.
 from __future__ import annotations
 import json
 from pathlib import Path
