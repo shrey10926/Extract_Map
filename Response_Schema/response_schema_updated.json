@@ -40,34 +40,34 @@
                     },
                     "quantity": {
                         "type": [
-                            "string",
+                            "number",
                             "null"
                         ],
-                        "description": "Quantity purchased."
+                        "description": "Quantity purchased. Numeric; decimals allowed (e.g. 5 or 2.5). null if blank/missing."
                     },
                     "rate": {
                         "type": [
-                            "string",
+                            "number",
                             "null"
                         ],
-                        "description": "Unit price without currency symbol."
+                        "description": "Unit price without currency symbol. Numeric; decimals allowed (e.g. 16870.21). null if blank/missing."
                     },
                     "amount": {
                         "type": [
-                            "string",
+                            "number",
                             "null"
                         ],
-                        "description": "Total line item amount without currency symbol."
+                        "description": "Total line item amount without currency symbol. Numeric; decimals allowed. null if blank/missing."
                     }
                 }
             }
         },
         "total_invoice_amount": {
             "type": [
-                "string",
+                "number",
                 "null"
             ],
-            "description": "Final invoice total amount without currency symbol."
+            "description": "Final invoice total amount without currency symbol. Numeric; decimals allowed. null if blank/missing."
         }
     },
     "required": [

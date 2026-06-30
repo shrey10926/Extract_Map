@@ -1,10 +1,16 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
-import json, re, unicodedata, yaml, boto3, faiss, numpy as np, pandas as pd
+import json, yaml, faiss, numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
+
+from text_normalization import (
+    normalize_supplier_name_fuzzy,
+    normalize_supplier_name_semantic,
+)
+from bedrock_utils import get_bedrock_client, parse_model_json
 
 DEBUG_DIR = Path("debug_logs")
 DEBUG_DIR.mkdir(exist_ok=True)
@@ -56,86 +62,12 @@ _bedrock_client_cache = None
 def _get_bedrock_client():
     global _bedrock_client_cache
     if _bedrock_client_cache is None:
-        session = boto3.Session(profile_name="shrey_bedrock")
-        _bedrock_client_cache = session.client(
-            "bedrock-runtime", region_name="us-east-1"
-        )
+        _bedrock_client_cache = get_bedrock_client(BEDROCK_CONFIG)
     return _bedrock_client_cache
 
 
-# =========================================================
-# NORMALIZATION
-# =========================================================
-
-def lowercase_text(text: str) -> str:
-    if pd.isna(text):
-        return ""
-    return str(text).lower()
-
-
-def trim_extra_spaces(text: str) -> str:
-    if pd.isna(text):
-        return ""
-    text = str(text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def unicode_normalization(text: str) -> str:
-    if pd.isna(text):
-        return ""
-    text = str(text)
-    text = unicodedata.normalize("NFKD", text)
-    text = text.encode("ascii", "ignore").decode("utf-8")
-    return text
-
-
-def safe_separator_normalization(text: str) -> str:
-    """
-    Safely normalize separators while preserving decimal numbers.
-
-    Examples:
-        1000BULBS.com -> 1000bulbs com
-        REM/TOP       -> rem top
-        3.5OZ         -> 3.5oz (preserved)
-    """
-    if pd.isna(text):
-        return ""
-
-    text = str(text)
-
-    # Replace separators with spaces
-    text = re.sub(r"[,_/\-]+", " ", text)
-
-    # Replace dots NOT between digits
-    text = re.sub(r"(?<!\d)\.(?!\d)", " ", text)
-
-    # Remove multiple spaces
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip()
-
-
-def normalize_supplier_name_fuzzy(text: str) -> str:
-    """
-    supplier_name_fuzzy pipeline
-    """
-    text = lowercase_text(text)
-    text = trim_extra_spaces(text)
-    text = unicode_normalization(text)
-    text = safe_separator_normalization(text)
-    text = trim_extra_spaces(text)
-    return text
-
-
-def normalize_supplier_name_semantic(text: str) -> str:
-    """
-    supplier_name_semantic pipeline
-    """
-    text = trim_extra_spaces(text)
-    text = unicode_normalization(text)
-    text = trim_extra_spaces(text)
-    return text
+# Normalization primitives + pipelines now live in text_normalization.py
+# (single source of truth shared with export_parquet.py and item_mapping.py).
 
 
 # =========================================================
@@ -175,30 +107,6 @@ def load_master_dataframe() -> pd.DataFrame:
         raise FileNotFoundError(f"Master parquet not found: {MASTER_PARQUET_PATH}")
     df = pd.read_parquet(MASTER_PARQUET_PATH)
     return df
-
-
-def load_invoice_json(invoice_input: Any) -> Dict[str, Any]:
-    """
-    Accepts either:
-      - dict
-      - JSON string
-      - path to a JSON file
-    """
-    if isinstance(invoice_input, dict):
-        return invoice_input
-
-    if isinstance(invoice_input, str):
-        s = invoice_input.strip()
-
-        # File path
-        if Path(s).exists():
-            with open(s, "r", encoding="utf-8") as f:
-                return json.load(f)
-
-        # JSON string
-        return json.loads(s)
-
-    raise TypeError("invoice_input must be a dict, JSON string, or JSON file path.")
 
 
 # =========================================================
@@ -678,24 +586,25 @@ def rerank_candidates_with_llm(
 
     response = client.converse(**request_payload)
 
-    response_text = (
-        response["output"]["message"]["content"][0]["text"]
-        .strip()
-        .removeprefix("```json")
-        .removeprefix("```")
-        .removesuffix("```")
-    )
-
     with open(DEBUG_DIR / f"{timestamp}_response_raw.json", "w", encoding="utf-8") as f:
         json.dump(response, f, indent=4, default=str, ensure_ascii=False)
 
-    llm_result = json.loads(response_text)
+    llm_result = parse_model_json(response)
 
     reranked = []
+    valid_ranks = set(int(r) for r in ranked_df["rank"].tolist())
     for item in llm_result.get("reranked_candidates", [])[:top_k_rerank]:
-        original_rank = item.get("original_rank")
-        match_row = ranked_df[ranked_df["rank"] == original_rank]
+        rank_raw = item.get("original_rank")
+        try:
+            original_rank = int(rank_raw)
+        except (TypeError, ValueError):
+            print(f"Skipping rerank candidate with non-integer original_rank: {rank_raw!r}")
+            continue
+        if original_rank not in valid_ranks:
+            print(f"Skipping rerank candidate with out-of-range original_rank: {original_rank}")
+            continue
 
+        match_row = ranked_df[ranked_df["rank"] == original_rank]
         if match_row.empty:
             continue
 

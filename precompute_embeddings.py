@@ -41,6 +41,7 @@ ENTITY_CONFIG = {
         "text_col": "item_name_semantic",
         "metadata_cols": [
             "seid",
+            "Supplier_Id",
             "Part_id",
             "PartName_Descriptive",
             "item_name_semantic",

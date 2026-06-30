@@ -1,17 +1,22 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import json, yaml, faiss, numpy as np, pandas as pd
+import json, yaml, logging, math, faiss, numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 
-# Reuse data/model/bedrock + normalization primitives already built for suppliers
+# Reuse data/model/bedrock plumbing already built for suppliers
 from supplier_mapping import (
     BASE_DIR, FAISS_DIR, METADATA_DIR, BEDROCK_CONFIG,
     _get_bedrock_client, load_master_dataframe, load_embedding_model,
-    lowercase_text, trim_extra_spaces, unicode_normalization,
-    safe_separator_normalization, map_supplier_name_from_invoice,
+    map_supplier_name_from_invoice,
 )
+# Normalization is shared (single source of truth) to guarantee build/query parity.
+from text_normalization import (
+    normalize_item_name_fuzzy,
+    normalize_item_name_semantic,
+)
+from bedrock_utils import converse_json
 
 # =========================================================
 # CONFIG  (same weighting scheme as supplier matching)
@@ -33,22 +38,8 @@ with open(ITEM_RERANK_SCHEMA_FILE, "r", encoding="utf-8") as f:
     ITEM_RERANK_RESPONSE_SCHEMA = json.load(f)
 
 
-# =========================================================
-# ITEM NORMALIZATION  (must mirror export_parquet.py exactly)
-# =========================================================
-def normalize_item_name_fuzzy(text: str) -> str:
-    text = lowercase_text(text)
-    text = trim_extra_spaces(text)
-    text = unicode_normalization(text)
-    text = safe_separator_normalization(text)
-    return trim_extra_spaces(text)
-
-
-def normalize_item_name_semantic(text: str) -> str:
-    text = lowercase_text(text)          # NOTE: items lowercase (suppliers do not)
-    text = trim_extra_spaces(text)
-    text = unicode_normalization(text)
-    return trim_extra_spaces(text)
+# Item normalization (normalize_item_name_fuzzy / _semantic) is imported from
+# text_normalization.py — the single source of truth shared with export_parquet.py.
 
 
 # =========================================================
@@ -204,10 +195,10 @@ def rerank_items_with_llm(uncertain: List[Tuple[int, list]], line_items: list) -
         "inferenceConfig": {"temperature": BEDROCK_CONFIG["api"]["temperature"],
                             "maxTokens": BEDROCK_CONFIG["api"]["max_tokens"]},
     }
-    response = client.converse(**payload)
-    text = (response["output"]["message"]["content"][0]["text"]
-            .strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
-    return json.loads(text).get("items", [])
+    parsed = converse_json(
+        client, payload, retry_delay=BEDROCK_CONFIG["api"].get("retry_delay", 0.0)
+    )
+    return parsed.get("items", [])
 
 
 # =========================================================
@@ -219,6 +210,33 @@ def _clean(v):
         return None
     if isinstance(v, str) and v.strip().upper() in ("", "NA", "N/A", "NULL", "NONE"):
         return None
+    return v
+
+
+def _clean_number(v):
+    """Numeric line-item fields (qty / unit_price / line_total_price).
+
+    The schema asks the model for numbers, but coerce defensively in case a string
+    slips through (strips commas / a leading currency symbol). Unparseable values are
+    left untouched; missing/empty markers become None.
+    """
+    v = _clean(v)
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        f = float(v)
+        if not math.isfinite(f):           # guard NaN / inf -> invalid JSON
+            return None
+        return int(f) if f.is_integer() else f
+    if isinstance(v, str):
+        s = v.strip().replace(",", "").lstrip("$€£₹ ").strip()
+        try:
+            f = float(s)
+        except ValueError:
+            return v                        # leave unparseable strings untouched
+        if not math.isfinite(f):            # "NaN" / "Infinity" -> null
+            return None
+        return int(f) if f.is_integer() else f
     return v
 
 
@@ -234,9 +252,9 @@ def _to_int(v):
 
 def _base(it):
     return {"extracted_item_name": _clean(it.get("item_name")),
-            "qty": _clean(it.get("quantity")),
-            "unit_price": _clean(it.get("rate")),
-            "line_total_price": _clean(it.get("amount"))}
+            "qty": _clean_number(it.get("quantity")),
+            "unit_price": _clean_number(it.get("rate")),
+            "line_total_price": _clean_number(it.get("amount"))}
 
 
 def _matched_item(it, chosen, confidence, reason):
@@ -261,10 +279,16 @@ def _accepted_item(it, best):
 def _resolve_uncertain(it, cands, decision):
     if decision is None:
         return _fallback_item(it, cands)
-    if decision.get("no_match") or decision.get("best_candidate_rank") in (None, 0):
+    if decision.get("no_match"):
         return _not_found_item(it)
-    rank = decision.get("best_candidate_rank")
-    chosen = next((c for c in cands if c["rank"] == rank), None)
+    # Coerce/validate the chosen rank defensively; bad/out-of-range -> not found.
+    try:
+        rank = int(decision.get("best_candidate_rank"))
+    except (TypeError, ValueError):
+        return _not_found_item(it)
+    if rank == 0:
+        return _not_found_item(it)
+    chosen = next((c for c in cands if int(c["rank"]) == rank), None)
     if chosen is None:
         return _not_found_item(it)
     conf = {"high": 90, "medium": 70, "low": 50}.get(decision.get("confidence", "low"), 50)
@@ -330,7 +354,19 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
     if uncertain:
         try:
             decisions = rerank_items_with_llm(uncertain, line_items)
-            dmap = {d.get("item_index"): d for d in decisions}
+            # Align decisions to items by the echoed item_index, coercing/validating it.
+            dmap = {}
+            for d in decisions:
+                idx_raw = d.get("item_index")
+                try:
+                    idx = int(idx_raw)
+                except (TypeError, ValueError):
+                    print(f"Skipping LLM item decision with non-integer item_index: {idx_raw!r}")
+                    continue
+                if idx in dmap:
+                    print(f"Duplicate item_index {idx} from LLM; keeping the first.")
+                    continue
+                dmap[idx] = d
             for i, cands in uncertain:
                 results[i] = _resolve_uncertain(line_items[i], cands, dmap.get(i))
         except Exception as e:
@@ -365,9 +401,11 @@ def _supplier_reason(supplier_result) -> str:
 
 
 def build_invoice_response(invoice_json, df_master, model,
-                           invoice_num: int = 1, pages: str = "Page 1") -> Dict[str, Any]:
+                           invoice_num: int = 1, total_pages: int = 1) -> Dict[str, Any]:
     """Map one extracted invoice (supplier + items) into the final invoice object."""
     line_items = invoice_json.get("line_items", []) or []
+    # One invoice per file: reflect the real page span instead of a hardcoded label.
+    pages = "Page 1" if (total_pages or 1) <= 1 else f"Pages 1-{total_pages}"
     invoice_obj = {
         "invoice_num": invoice_num,
         "pages": pages,
@@ -406,9 +444,12 @@ def build_file_response(invoice_json, df_master, model,
                         file_name: str, total_pages: int = 1) -> Dict[str, Any]:
     """Top-level response for one processed file (wraps a single invoice for now)."""
     try:
-        invoice_obj = build_invoice_response(invoice_json, df_master, model)
+        invoice_obj = build_invoice_response(invoice_json, df_master, model,
+                                             total_pages=total_pages)
         return {"file": file_name, "status": "success", "total_pages": total_pages,
                 "error": None, "invoices": [invoice_obj]}
-    except Exception as e:
+    except Exception:
+        logging.exception("Unexpected error building response for %s", file_name)
         return {"file": file_name, "status": "error", "total_pages": total_pages,
-                "error": str(e), "invoices": []}
+                "error": "Failed to map the invoice due to an internal error.",
+                "invoices": []}

@@ -1,8 +1,10 @@
 # aws sso login --profile shrey_bedrock
 from pathlib import Path
-import io, time, json, yaml, boto3, fitz
+import io, json, yaml, fitz
 from typing import Optional, List, Dict, Any
 from PIL import Image
+
+from bedrock_utils import get_bedrock_client, converse_json
 
 
 # =============================================================================
@@ -30,12 +32,7 @@ SCHEMA_FILE = BASE_DIR / "Response_Schema" / "response_schema_updated.json"
 with open(SCHEMA_FILE, "r", encoding="utf-8") as f:
     response_schema = json.load(f)
 
-session = boto3.Session(profile_name="shrey_bedrock")
-
-client = session.client(
-    "bedrock-runtime",
-    region_name="us-east-1"
-)
+client = get_bedrock_client(APP_CONFIG)
 
 
 # =============================================================================
@@ -254,6 +251,63 @@ def _load_source(
     return p.read_bytes(), p.name, p.suffix.lower()
 
 
+SUPPORTED_EXTS = {".pdf", ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+_CONTENT_TYPE_EXT = {
+    "application/pdf": ".pdf",
+    "image/tiff": ".tif",
+    "image/tif": ".tif",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+    "image/x-ms-bmp": ".bmp",
+}
+
+
+def _sniff_magic(data: bytes) -> Optional[str]:
+    """Best-effort file-type detection from leading magic bytes."""
+    if data[:4] == b"%PDF":
+        return ".pdf"
+    if data[:4] in (b"II*\x00", b"MM\x00*"):
+        return ".tif"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if data[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[:2] == b"BM":
+        return ".bmp"
+    return None
+
+
+def detect_extension(data: bytes, filename: Optional[str] = None,
+                     content_type: Optional[str] = None) -> str:
+    """
+    Decide the document type robustly: trust a known filename suffix first, then the
+    HTTP Content-Type, then leading magic bytes. Pre-signed URLs often have a query
+    string or no extension, so the suffix alone is unreliable.
+    """
+    if filename:
+        ext = Path(filename).suffix.lower()
+        if ext in SUPPORTED_EXTS:
+            return ext
+
+    if content_type:
+        ct = content_type.split(";")[0].strip().lower()
+        if ct in _CONTENT_TYPE_EXT:
+            return _CONTENT_TYPE_EXT[ct]
+
+    sniffed = _sniff_magic(data)
+    if sniffed:
+        return sniffed
+
+    # Nothing matched; return the raw suffix (convert_document will raise a clear error).
+    return Path(filename).suffix.lower() if filename else ""
+
+
 def convert_document(
     data: bytes,
     ext: str,
@@ -314,11 +368,45 @@ def build_content_blocks(
 # CLAUDE EXTRACTION
 # =============================================================================
 
+class ExtractionValidationError(ValueError):
+    """Raised when the extracted invoice is missing the minimum required fields.
+
+    The message is safe to surface to the caller (it does not leak internals).
+    """
+
+
+def _validate_entities(entities: Dict[str, Any]) -> None:
+    """Fail early if the extraction is unusable: no supplier name OR no line items."""
+    supplier = entities.get("supplier_name")
+    has_supplier = isinstance(supplier, str) and supplier.strip() != ""
+
+    line_items = entities.get("line_items") or []
+    has_items = any(
+        isinstance(li, dict)
+        and isinstance(li.get("item_name"), str)
+        and li.get("item_name").strip() != ""
+        for li in line_items
+    )
+
+    if not has_supplier or not has_items:
+        missing = []
+        if not has_supplier:
+            missing.append("supplier name")
+        if not has_items:
+            missing.append("line items")
+        raise ExtractionValidationError(
+            "Could not extract the required invoice fields ("
+            + " and ".join(missing)
+            + "). The document may be unreadable, blank, or not an invoice."
+        )
+
+
 def extract_invoice(
     source,
     password: Optional[str] = None,
     filename: Optional[str] = None,
-    save_images: bool = True
+    save_images: bool = True,
+    content_type: Optional[str] = None
 ) -> dict:
     """
     `source` may be raw bytes (then `filename` with an extension is required) or a file path.
@@ -335,6 +423,9 @@ def extract_invoice(
 
     data, name, ext = _load_source(source, filename)
 
+    # Robustly resolve the document type (suffix may be missing on signed URLs).
+    ext = detect_extension(data, name, content_type)
+
     pages = convert_document(
         data=data,
         ext=ext,
@@ -343,53 +434,40 @@ def extract_invoice(
         save_images=save_images
     )
 
+    if not pages:
+        raise ValueError("No pages could be rendered from the document.")
+
     print(f"Pages processed: {len(pages)}")
 
     content_blocks = build_content_blocks(pages)
 
-    response = client.converse(
-        modelId=APP_CONFIG["api"]["model_name"],
-        system=[
-            {
-                "text": SYSTEM_PROMPT
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": content_blocks
-            }
-        ],
-        outputConfig={
+    payload = {
+        "modelId": APP_CONFIG["api"]["model_name"],
+        "system": [{"text": SYSTEM_PROMPT}],
+        "messages": [{"role": "user", "content": content_blocks}],
+        "outputConfig": {
             "textFormat": {
                 "type": "json_schema",
                 "structure": {
                     "jsonSchema": {
                         "name": "invoice_extraction",
-                        "schema": json.dumps(
-                            response_schema
-                        )
+                        "schema": json.dumps(response_schema),
                     }
-                }
+                },
             }
         },
-        inferenceConfig={
-            "temperature":
-                APP_CONFIG["api"]["temperature"],
-            "maxTokens":
-                APP_CONFIG["api"]["max_tokens"]
-        }
+        "inferenceConfig": {
+            "temperature": APP_CONFIG["api"]["temperature"],
+            "maxTokens": APP_CONFIG["api"]["max_tokens"],
+        },
+    }
+
+    entities = converse_json(
+        client, payload, retry_delay=APP_CONFIG["api"].get("retry_delay", 0.0)
     )
 
-    response_text = (
-        response["output"]["message"]["content"][0]["text"]
-        .strip()
-        .removeprefix("```json")
-        .removeprefix("```")
-        .removesuffix("```")
-    )
-
-    entities = json.loads(response_text)
+    # Fail early if the extraction is unusable (no supplier name OR no line items).
+    _validate_entities(entities)
 
     return {
         "file": name,

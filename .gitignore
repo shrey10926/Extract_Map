@@ -6,3 +6,4 @@ dist/
 *.spec
 .ipynb_checkpoints
 pitch/
+extracted_samples.txt
