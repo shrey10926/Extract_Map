@@ -1,0 +1,17 @@
+{
+  "network": {
+    "device_ip": "192.168.1.111",
+    "device_port": 20108,
+    "source_id": "ARN-SGPS",
+    "time_fmt": "%d:%m:%Y:%H:%M:%S",
+    "terminator": "\r"
+  },
+  "timing": {
+    "send_interval": 1.0,
+    "connect_timeout": 5.0,
+    "send_timeout": 5.0,
+    "reconnect_delay": 5.0,
+    "dead_peer_timeout": 30,
+    "heartbeat_every": 60
+  }
+}
