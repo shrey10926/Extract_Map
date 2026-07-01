@@ -1,17 +1,16 @@
 from __future__ import annotations
-import json
-import logging
+import json, time, logging
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 from urllib.request import urlopen
 from urllib.error import HTTPError
 
-from extract_entities import extract_invoice, ExtractionValidationError
-from supplier_mapping import load_master_dataframe, load_embedding_model
-from item_mapping import build_file_response
+from extract_entities_3 import extract_invoice, ExtractionValidationError
+from supplier_mapping_3 import load_master_dataframe, load_embedding_model
+from item_mapping_3 import build_file_response
 
 BASE_DIR = Path(__file__).resolve().parent
-REQUEST_FILE = BASE_DIR / "sample_request2.json"
+REQUEST_FILE = BASE_DIR / "sample_request1.json"
 DOWNLOAD_TIMEOUT = 60   # seconds, for the invoice download
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024   # 25 MB cap on the downloaded invoice
 
@@ -142,8 +141,11 @@ def process_invoice(request, password: str | None = None) -> dict:
 
 
 if __name__ == "__main__":
+    start = time.time()
     response = process_invoice(REQUEST_FILE)
 
     print(json.dumps(response, indent=2, default=str))
     with open(BASE_DIR / "final_response.json", "w", encoding="utf-8") as f:
         json.dump(response, f, indent=4, ensure_ascii=False, default=str)
+    
+    print(f"Total time taken is: {time.time() - start} seconds!")

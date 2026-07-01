@@ -6,7 +6,7 @@ from rapidfuzz import process, fuzz
 from sentence_transformers import SentenceTransformer
 
 # Reuse data/model/bedrock plumbing already built for suppliers
-from supplier_mapping import (
+from supplier_mapping_3 import (
     BASE_DIR, FAISS_DIR, METADATA_DIR, BEDROCK_CONFIG,
     _get_bedrock_client, load_master_dataframe, load_embedding_model,
     map_supplier_name_from_invoice,
@@ -183,8 +183,9 @@ def rerank_items_with_llm(uncertain: List[Tuple[int, list]], line_items: list) -
         "supplier, based only on the item name.\n\n"
         + "\n\n".join(blocks) + "\n\nReturn one decision per item_index."
     )
-
+    print(f"ZZZZ")
     client = _get_bedrock_client()
+    print(f"WHAT")
     payload = {
         "modelId": BEDROCK_CONFIG["api"]["model_name"],
         "system": [{"text": ITEM_RERANK_SYSTEM_PROMPT}],
@@ -195,9 +196,11 @@ def rerank_items_with_llm(uncertain: List[Tuple[int, list]], line_items: list) -
         "inferenceConfig": {"temperature": BEDROCK_CONFIG["api"]["temperature"],
                             "maxTokens": BEDROCK_CONFIG["api"]["max_tokens"]},
     }
+    print(f"YESSIR")
     parsed = converse_json(
         client, payload, retry_delay=BEDROCK_CONFIG["api"].get("retry_delay", 0.0)
     )
+    print(f"KKKKK")
     return parsed.get("items", [])
 
 
@@ -353,7 +356,9 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
 
     if uncertain:
         try:
+            print(f"OOOO")
             decisions = rerank_items_with_llm(uncertain, line_items)
+            print(f"PPPPP")
             # Align decisions to items by the echoed item_index, coercing/validating it.
             dmap = {}
             for d in decisions:

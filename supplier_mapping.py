@@ -53,7 +53,7 @@ LLM_RERANK_THRESHOLD = 0.90
 TOP_K_RERANK = 5
 PARTS_PER_CANDIDATE = 3
 
-with open(BASE_DIR / "bedrock_config.yaml", "r") as f:
+with open(BASE_DIR / "bedrock_config_3.yaml", "r") as f:
     BEDROCK_CONFIG = yaml.safe_load(f)
 
 _bedrock_client_cache = None
@@ -298,7 +298,7 @@ def get_semantic_supplier_candidates(
 
     rows = []
     for score, idx in zip(scores[0], indices[0]):
-        print("\nINDEX:", idx)
+        # print("\nINDEX:", idx)
         if idx < 0 or idx >= len(metadata_df):
             continue
 
@@ -320,11 +320,11 @@ def get_semantic_supplier_candidates(
             "matched_via": "semantic"
         })
 
-    print("Query:", query_semantic)
-    print("Index size:", index.ntotal)
-    print("Metadata size:", len(metadata_df))
-    print("Top scores:", scores)
-    print("Top indices:", indices)
+    # print("Query:", query_semantic)
+    # print("Index size:", index.ntotal)
+    # print("Metadata size:", len(metadata_df))
+    # print("Top scores:", scores)
+    # print("Top indices:", indices)
 
     if not rows:
         return pd.DataFrame(columns=[
@@ -736,9 +736,11 @@ def map_supplier_name_from_invoice(
             "supplier_semantic_query": supplier_semantic_query
         }
     }
+    print(f"AAA --> {result['best_score']}")
 
     if result["best_score"] < LLM_RERANK_THRESHOLD:
         try:
+            print(f"1")
             rerank_result = rerank_candidates_with_llm(
                 ranked_df=ranked_df,
                 invoice_json=invoice_json,
@@ -746,13 +748,18 @@ def map_supplier_name_from_invoice(
                 top_k_rerank=TOP_K_RERANK,
                 n_parts_per_candidate=PARTS_PER_CANDIDATE
             )
+            print(f"2")
+
 
             result["llm_reranked"] = True
             result["llm_reranked_candidates"] = rerank_result["reranked_candidates"]
             result["no_match"] = rerank_result["no_match"]
             result["no_match_reason"] = rerank_result["no_match_reason"]
 
+            print(f"3")
+
             if rerank_result["reranked_candidates"] and not rerank_result["no_match"]:
+                print(f"4")
                 top_reranked = rerank_result["reranked_candidates"][0]
                 result["best_supplier_id"] = top_reranked["Supplier_Id"]
                 result["best_supplier_name"] = top_reranked["Supplier_Name"]

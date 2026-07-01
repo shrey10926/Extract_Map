@@ -37,24 +37,25 @@ def get_bedrock_client(cfg: Dict[str, Any]):
     """
     Build a bedrock-runtime client.
 
-    AWS profile/region: cfg["aws"] is AUTHORITATIVE; env (AWS_PROFILE / AWS_REGION /
-    AWS_DEFAULT_REGION) is only a fallback for when the config leaves them blank (e.g. to
-    use an instance role / the ambient region). The model in bedrock_config.yaml is pinned
-    to a specific region, so this prevents a stray AWS_REGION from silently re-pointing the
-    client at a region where that model is not authorized (-> AccessDeniedException).
+    AWS profile/region: env (AWS_PROFILE / AWS_REGION) overrides cfg["aws"]; if no
+    profile is configured, fall back to the default credential chain so it can run in
+    environments without a named profile (e.g. an instance role).
     Timeouts/retries come from cfg["api"]["timeout_seconds"] so a stuck call cannot hang
     forever.
     """
     aws = (cfg or {}).get("aws", {}) or {}
     api = (cfg or {}).get("api", {}) or {}
+    print(f"AWS: {aws}")
 
     profile = aws.get("profile") or os.getenv("AWS_PROFILE")
+    print(f"PRFILE NAME: {profile}")
     region = (
         aws.get("region")
         or os.getenv("AWS_REGION")
         or os.getenv("AWS_DEFAULT_REGION")
         or "us-east-1"
     )
+    print(f"REGION: {region}")
 
     read_timeout = api.get("timeout_seconds", 300)
     max_attempts = int(api.get("max_attempts", 3))
@@ -71,7 +72,6 @@ def get_bedrock_client(cfg: Dict[str, Any]):
         session = boto3.Session()
 
     return session.client("bedrock-runtime", region_name=region, config=boto_cfg)
-
 
 # =========================================================
 # RESPONSE PARSING
@@ -136,8 +136,11 @@ def converse_json(client, payload: Dict[str, Any], retries: int = 1,
     failure (transient bad output). Re-raises the last error if all attempts fail.
     """
     last_err = None
+    print(f"AAAAAAAAAA")
     for attempt in range(retries + 1):
+        print(f"LLLLL")
         response = client.converse(**payload)
+        print(f"KOKOK")
         try:
             return parse_model_json(response)
         except ModelOutputError as e:

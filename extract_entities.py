@@ -17,7 +17,7 @@ OUTPUT_DIR = Path("./saved_images")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-CONFIG_FILE = BASE_DIR / "bedrock_config.yaml"
+CONFIG_FILE = BASE_DIR / "bedrock_config_3.yaml"
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     APP_CONFIG = yaml.safe_load(f)
 
