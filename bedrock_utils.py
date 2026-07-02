@@ -73,6 +73,27 @@ def get_bedrock_client(cfg: Dict[str, Any]):
 
     return session.client("bedrock-runtime", region_name=region, config=boto_cfg)
 
+
+# =========================================================
+# PROMPT CACHING
+# =========================================================
+
+def build_system_blocks(system_text: str, cfg: Dict[str, Any] | None = None) -> list:
+    """Build the `system` content list for a converse() payload, with an optional
+    trailing cache point.
+
+    The system prompt is static across every call of a given type (extraction / supplier
+    rerank / item rerank). Marking it with a cachePoint lets Bedrock reuse that prefix on
+    subsequent calls within the cache TTL, cutting input-processing latency. Controlled by
+    cfg["api"]["prompt_cache"] (default True). Note: Bedrock only actually caches a prefix
+    above a model-specific minimum token count; a short prompt is a no-op, not an error.
+    """
+    blocks = [{"text": system_text}]
+    if ((cfg or {}).get("api", {}) or {}).get("prompt_cache", True):
+        blocks.append({"cachePoint": {"type": "default"}})
+    return blocks
+
+
 # =========================================================
 # RESPONSE PARSING
 # =========================================================

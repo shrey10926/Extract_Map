@@ -5,6 +5,9 @@ api:
   timeout_seconds: 300
   retry_delay: 10.0
   max_attempts: 3
+  # Add a cachePoint after the static system prompt so Bedrock can reuse that prefix
+  # across calls (lower input-processing latency). Set to false to disable.
+  prompt_cache: true
 
 # AWS session config. Env vars AWS_PROFILE / AWS_REGION override these.
 # Leave profile empty ("") to use the default credential chain (e.g. an instance role).

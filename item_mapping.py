@@ -16,14 +16,20 @@ from text_normalization import (
     normalize_item_name_fuzzy,
     normalize_item_name_semantic,
 )
-from bedrock_utils import converse_json
+from bedrock_utils import converse_json, build_system_blocks
 
 # =========================================================
 # CONFIG  (same weighting scheme as supplier matching)
 # =========================================================
 ITEM_WEIGHTS = {"exact": 0.50, "fuzzy": 0.30, "semantic": 0.20}
 TOP_K_ITEM_CANDIDATES = 5          # candidate parts kept per line item
-# Gating: only a TRUE exact name match auto-accepts; every non-exact item goes to the LLM.
+# Gating: a TRUE exact name match auto-accepts (confidence 100). A non-exact match whose
+# fuzzy AND semantic scores are both very high also auto-accepts (skipping the LLM). Every
+# other item goes to the batched LLM rerank. AND (not OR) guards against WRatio scoring 100
+# on a subset/token match while the semantics actually differ.
+ITEM_AUTO_ACCEPT_FUZZY = 95        # RapidFuzz WRatio (0-100)
+ITEM_AUTO_ACCEPT_COSINE = 0.90     # cosine similarity (0-1)
+ITEM_AUTO_ACCEPT_CONFIDENCE = 90   # match_confidence for high-confidence non-exact matches
 
 # Messages returned when nothing matches in the DB
 SUPPLIER_NOT_FOUND_MSG = "Supplier Name match not found in Database"
@@ -188,7 +194,7 @@ def rerank_items_with_llm(uncertain: List[Tuple[int, list]], line_items: list) -
     print(f"WHAT")
     payload = {
         "modelId": BEDROCK_CONFIG["api"]["model_name"],
-        "system": [{"text": ITEM_RERANK_SYSTEM_PROMPT}],
+        "system": build_system_blocks(ITEM_RERANK_SYSTEM_PROMPT, BEDROCK_CONFIG),
         "messages": [{"role": "user", "content": [{"text": user_message}]}],
         "outputConfig": {"textFormat": {"type": "json_schema", "structure": {
             "jsonSchema": {"name": "item_reranking",
@@ -279,6 +285,13 @@ def _accepted_item(it, best):
     return _matched_item(it, best, 100, reason)
 
 
+def _auto_accepted_item(it, best):
+    """Non-exact but very-high fuzzy+cosine match: auto-accepted without the LLM."""
+    reason = (f"High-confidence name match (fuzzy {best['fuzzy']:.0f}, "
+              f"cosine {best['cosine']:.2f}); auto-accepted without LLM rerank.")
+    return _matched_item(it, best, ITEM_AUTO_ACCEPT_CONFIDENCE, reason)
+
+
 def _resolve_uncertain(it, cands, decision):
     if decision is None:
         return _fallback_item(it, cands)
@@ -348,9 +361,12 @@ def map_line_items_from_invoice(invoice_json, supplier_result, df_master, model,
     uncertain = []
     for i, cands in enumerate(cands_per_item):
         best = cands[0] if cands else None
-        # Only a TRUE exact name match auto-accepts; everything else goes to the LLM.
+        # A TRUE exact name match auto-accepts (conf 100); a very-high fuzzy+cosine match
+        # also auto-accepts (conf ITEM_AUTO_ACCEPT_CONFIDENCE); everything else -> LLM.
         if best and best["exact"] >= 1.0:
             results[i] = _accepted_item(line_items[i], best)
+        elif best and best["fuzzy"] >= ITEM_AUTO_ACCEPT_FUZZY and best["cosine"] >= ITEM_AUTO_ACCEPT_COSINE:
+            results[i] = _auto_accepted_item(line_items[i], best)
         else:
             uncertain.append((i, cands))
 
@@ -392,12 +408,18 @@ def _supplier_confidence(supplier_result) -> int:
     if supplier_result.get("llm_reranked") and supplier_result.get("llm_reranked_candidates"):
         conf = supplier_result["llm_reranked_candidates"][0].get("confidence", "low")
         return {"high": 90, "medium": 70, "low": 50}.get(conf, 50)
+    # High-confidence non-exact auto-accept: the weighted best_score caps at ~0.50 for a
+    # non-exact match, so report the explicit auto-accept confidence instead.
+    if supplier_result.get("auto_accept_confidence") is not None:
+        return int(supplier_result["auto_accept_confidence"])
     return round(float(supplier_result.get("best_score", 0.0)) * 100)
 
 
 def _supplier_reason(supplier_result) -> str:
     if supplier_result.get("llm_reranked") and supplier_result.get("llm_reranked_candidates"):
         return supplier_result["llm_reranked_candidates"][0].get("reason", "")
+    if supplier_result.get("auto_accept_reason"):
+        return supplier_result["auto_accept_reason"]
     q = supplier_result.get("query", {})
     return (f"Matched extracted vendor '{q.get('extracted_supplier', '')}' to "
             f"'{supplier_result.get('best_supplier_name', '')}' "

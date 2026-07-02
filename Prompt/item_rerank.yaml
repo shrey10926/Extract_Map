@@ -21,6 +21,7 @@ system_prompt: >+
   - Set best_candidate_rank to the rank of the chosen candidate.
   - If none of the candidates is a reasonable match, set no_match to true and
     best_candidate_rank to null.
-  - Give a brief, concrete reason for each decision.
+  - Give a brief, concrete reason for each decision: 2-3 short sentences (roughly 40 words
+    maximum), no filler.
 
 user_prompt: >+

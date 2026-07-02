@@ -4,7 +4,7 @@ import io, json, yaml, fitz
 from typing import Optional, List, Dict, Any
 from PIL import Image
 
-from bedrock_utils import get_bedrock_client, converse_json
+from bedrock_utils import get_bedrock_client, converse_json, build_system_blocks
 
 
 # =============================================================================
@@ -443,7 +443,7 @@ def extract_invoice(
 
     payload = {
         "modelId": APP_CONFIG["api"]["model_name"],
-        "system": [{"text": SYSTEM_PROMPT}],
+        "system": build_system_blocks(SYSTEM_PROMPT, APP_CONFIG),
         "messages": [{"role": "user", "content": content_blocks}],
         "outputConfig": {
             "textFormat": {

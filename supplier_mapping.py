@@ -10,7 +10,7 @@ from text_normalization import (
     normalize_supplier_name_fuzzy,
     normalize_supplier_name_semantic,
 )
-from bedrock_utils import get_bedrock_client, parse_model_json
+from bedrock_utils import get_bedrock_client, parse_model_json, build_system_blocks
 
 DEBUG_DIR = Path("debug_logs")
 DEBUG_DIR.mkdir(exist_ok=True)
@@ -52,6 +52,15 @@ TOP_K_FINAL = 10
 LLM_RERANK_THRESHOLD = 0.90
 TOP_K_RERANK = 5
 PARTS_PER_CANDIDATE = 3
+
+# High-confidence auto-accept: skip the (~20s) LLM rerank for a NON-exact top candidate
+# whose fuzzy AND semantic scores are both very high. Requiring both signals (AND, not OR)
+# is deliberate — WRatio can score 100 on a subset/token match (e.g. "ACME" vs "ACME CORP
+# HOLDINGS"), so a high cosine is required to confirm the semantics agree too. Tune up to
+# send more borderline matches to the LLM, down to skip more of them.
+SUPPLIER_AUTO_ACCEPT_FUZZY = 95        # RapidFuzz WRatio (0-100)
+SUPPLIER_AUTO_ACCEPT_COSINE = 0.90     # cosine similarity (0-1)
+SUPPLIER_AUTO_ACCEPT_CONFIDENCE = 90   # reported supplier_confidence for such matches
 
 with open(BASE_DIR / "bedrock_config_3.yaml", "r") as f:
     BEDROCK_CONFIG = yaml.safe_load(f)
@@ -553,11 +562,7 @@ def rerank_candidates_with_llm(
 
     request_payload = {
     "modelId": BEDROCK_CONFIG["api"]["model_name"],
-    "system": [
-        {
-            "text": RERANK_SYSTEM_PROMPT
-        }
-    ],
+    "system": build_system_blocks(RERANK_SYSTEM_PROMPT, BEDROCK_CONFIG),
     "messages": [
         {
             "role": "user",
@@ -738,7 +743,27 @@ def map_supplier_name_from_invoice(
     }
     print(f"AAA --> {result['best_score']}")
 
-    if result["best_score"] < LLM_RERANK_THRESHOLD:
+    # High-confidence numeric auto-accept: if the top candidate is not a byte-exact match
+    # but BOTH its fuzzy and semantic scores are very high, the match is unambiguous enough
+    # to skip the LLM rerank entirely (saves one ~20s Bedrock call).
+    best_fuzzy = float(best_row["fuzzy_score"])
+    best_cosine = float(best_row["cosine_score"])
+    is_exact = float(best_row["exact_match"]) >= 1.0
+    high_conf_non_exact = (
+        not is_exact
+        and best_fuzzy >= SUPPLIER_AUTO_ACCEPT_FUZZY
+        and best_cosine >= SUPPLIER_AUTO_ACCEPT_COSINE
+    )
+
+    if high_conf_non_exact:
+        result["auto_accepted"] = True
+        result["auto_accept_confidence"] = SUPPLIER_AUTO_ACCEPT_CONFIDENCE
+        result["auto_accept_reason"] = (
+            f"High-confidence name match to '{result['best_supplier_name']}' "
+            f"(fuzzy {best_fuzzy:.0f}, cosine {best_cosine:.2f}); "
+            f"auto-accepted without LLM rerank."
+        )
+    elif result["best_score"] < LLM_RERANK_THRESHOLD:
         try:
             print(f"1")
             rerank_result = rerank_candidates_with_llm(

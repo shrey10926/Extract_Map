@@ -26,7 +26,7 @@
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Brief explanation for the decision."
+                        "description": "Brief explanation for the decision (2-3 short sentences, ~40 words max)."
                     }
                 },
                 "required": ["item_index", "best_candidate_rank", "confidence", "no_match", "reason"]

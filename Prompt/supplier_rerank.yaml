@@ -15,6 +15,7 @@ system_prompt: >+
   Note: The sample products are only a small subset of what the candidate supplies — a missing product category does not mean the candidate is wrong, but matching categories is a positive signal.
 
   Return the top 5 most likely matches with confidence level and reasoning.
+  Keep each "reason" concise: 2-3 short sentences (roughly 40 words maximum), no filler.
   If none of the candidates appear to be a correct match, set no_match to true and explain why.
 
 user_prompt: >+

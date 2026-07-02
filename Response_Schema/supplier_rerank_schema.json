@@ -22,7 +22,7 @@
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Brief explanation for why this candidate is or isn't a good match"
+                        "description": "Brief explanation (2-3 short sentences, ~40 words max) for why this candidate is or isn't a good match"
                     }
                 },
                 "required": [
